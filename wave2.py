@@ -17,7 +17,7 @@ PULSE_SPEED = 1.5
 NEON_GLOW_STRENGTH = 0.6
 
 SYNC_FREQ_TOLERANCE  = 0.10
-SYNC_PHASE_TOLERANCE = 0.5
+SYNC_PHASE_TOLERANCE = 0.5 # tolerance is in radians (1 rad is about 11 degrees)
 
 # --- THICKNESS & SIZING RATIOS ---
 WAVE_GLOW_THICK_RATIO   = 0.020
@@ -154,7 +154,7 @@ class PlayerState:
             
             if self.last_peak_time is None:
                 time_until_peak = next_peak_time - current_time
-                time_since_queue = current_time - self.first_input_time
+                time_since_queue = current_time - (self.first_input_time or current_time)
                 total_rise_time = INPUT_DELAY
                 
                 if total_rise_time > 0.001:
