@@ -85,7 +85,7 @@ class PulseRing:
 class PlayerState:
     """
     Wave generation based on known future inputs from queue.
-    Starts at middle, smoothly transitions to first peak, returns to middle when idle.
+    Integrates the direct quadrant-mapping logic for the circular arrow angle.
     """
     SETTLE_DURATION = 0.55
 
@@ -111,9 +111,8 @@ class PlayerState:
         self.frequency     = 0.0
         self.phase         = 0.0
 
-        # Arrow accumulator
+        # Arrow mapped state
         self.arrow_angle       = 0.0
-        self.arrow_speed       = 0.0
         self.display_angle     = 0.0
 
         # Idle return state
@@ -138,14 +137,14 @@ class PlayerState:
     def _calculate_wave_position(self, current_time):
         """
         Calculate wave position based on known future inputs in queue.
-        First input creates smooth rise from middle to peak.
-        Returns (y_norm, frequency, arrow_speed)
+        Calculates and returns the precise quadrant target angle for the circular graph.
+        Returns (y_norm, frequency, target_arrow_angle)
         """
         if not self.signal_queue:
             # No future inputs
             if self.last_peak_time is None:
                 # Never had any input - stay at middle
-                return 0.0, 0.0, 0.0
+                return 0.0, 0.0, self.arrow_angle
             else:
                 # Predict next input at INPUT_DELAY from now
                 predicted_peak_time = current_time + INPUT_DELAY
@@ -154,14 +153,21 @@ class PlayerState:
                 
                 if half_period > 0.001:
                     progress = min(time_since_peak / half_period, 1.0)
-                    # Cosine from last peak back to center
+                    # Cosine from last peak to opposite peak
                     y_norm = self.current_direction * math.cos(progress * math.pi)
                     frequency = 1.0 / (half_period * 2)
-                    arrow_speed = math.pi / half_period
+                    
+                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
+                    if self.current_direction == 1:
+                        # Peak +1 going to -1: Sweeps 90° to 270° (Quadrants 2 & 3)
+                        target_angle = (math.pi / 2) + progress * math.pi
+                    else:
+                        # Peak -1 going to +1: Sweeps 270° to 450°/90° (Quadrants 4 & 1)
+                        target_angle = (3 * math.pi / 2) + progress * math.pi
                 else:
                     y_norm = 0.0
                     frequency = 0.0
-                    arrow_speed = 0.0
+                    target_angle = self.arrow_angle
                     
         else:
             # Have future inputs - calculate based on next peak
@@ -169,29 +175,29 @@ class PlayerState:
             
             if self.last_peak_time is None:
                 # FIRST INPUT - smooth rise from middle (0) to peak
-                # The wave should reach the peak exactly when input takes effect
                 time_until_peak = next_peak_time - current_time
                 time_since_queue = current_time - self.first_input_time
-                total_rise_time = INPUT_DELAY  # Total time from queue to peak
+                total_rise_time = INPUT_DELAY
                 
                 if total_rise_time > 0.001:
-                    # Progress from 0 (when queued) to 1 (at peak)
                     progress = min(time_since_queue / total_rise_time, 1.0)
-                    # Smooth rise: use (1 - cos) to go from 0 to 1
-                    y_norm = next_direction * (1.0 - math.cos(progress * math.pi)) / 2.0
-                    # This goes from 0 at start to next_direction at peak
-                    # Actually we want full amplitude, so:
                     y_norm = next_direction * math.sin(progress * math.pi / 2.0)
-                    
                     frequency = 1.0 / (total_rise_time * 2)
-                    arrow_speed = math.pi / total_rise_time
+                    
+                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
+                    if next_direction == 1:
+                        # Center to +1: Sweeps 0° to 90° (Quadrant 1)
+                        target_angle = progress * (math.pi / 2)
+                    else:
+                        # Center to -1: Sweeps 360° to 270° backward mapping to remain continuous (Quadrant 4)
+                        target_angle = 2 * math.pi - progress * (math.pi / 2)
                 else:
                     y_norm = 0.0
                     frequency = 0.0
-                    arrow_speed = 0.0
+                    target_angle = 0.0
                     
             else:
-                # Subsequent inputs - normal wave from peak to peak
+                # SUBSEQUENT INPUTS - normal wave from peak to peak
                 half_period = next_peak_time - self.last_peak_time
                 time_in_cycle = current_time - self.last_peak_time
                 
@@ -205,13 +211,20 @@ class PlayerState:
                         y_norm = self.current_direction * math.cos(progress * math.pi)
                     
                     frequency = 1.0 / (half_period * 2)
-                    arrow_speed = math.pi / half_period
+                    
+                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
+                    if self.current_direction == 1:
+                        # Peak +1 going to -1: Sweeps 90° to 270° (Quadrants 2 & 3)
+                        target_angle = (math.pi / 2) + progress * math.pi
+                    else:
+                        # Peak -1 going to +1: Sweeps 270° to 450°/90° (Quadrants 4 & 1)
+                        target_angle = (3 * math.pi / 2) + progress * math.pi
                 else:
                     y_norm = self.current_y_norm
                     frequency = 0.0
-                    arrow_speed = 0.0
+                    target_angle = self.arrow_angle
         
-        return y_norm, frequency, arrow_speed
+        return y_norm, frequency, target_angle
 
     def update(self, dt, current_time, amplitude):
         idle = (current_time - self.last_input_time) > IDLE_RESET_TIME
@@ -229,7 +242,6 @@ class PlayerState:
             self._idle_wave_from  = self.current_y_norm
             self._idle_wave_t     = 0.0
             self.frequency        = 0.0
-            self.arrow_speed      = 0.0
             self.last_signal      = None
             self.last_peak_time   = None
             self.first_input_time = None
@@ -244,7 +256,7 @@ class PlayerState:
             wave_ease = 1.0 - (1.0 - wave_frac) ** 3  # cubic ease-out
             y_norm    = self._idle_wave_from * (1.0 - wave_ease)
 
-            # Arrow glides to 0°
+            # Arrow glides to nearest visual 0° mark
             target_angle = round(self.arrow_angle / (2 * math.pi)) * 2 * math.pi
             diff         = target_angle - self.arrow_angle
             step         = IDLE_RETURN_SPEED * dt
@@ -266,16 +278,13 @@ class PlayerState:
             self.frequency = 0.0
             
         else:
-            # Calculate wave based on queue
-            y_norm, frequency, arrow_speed = self._calculate_wave_position(current_time)
+            # Map wave based directly on target quadrant phase
+            y_norm, frequency, target_angle = self._calculate_wave_position(current_time)
             self.current_y_norm = y_norm
             self.frequency = frequency
-            self.arrow_speed = arrow_speed
-            
-            # Advance arrow
-            if self.arrow_speed > 0:
-                self.arrow_angle += self.arrow_speed * dt
+            self.arrow_angle = target_angle
 
+        # Apply modulo so drawing acts cleanly 0-360 mapped
         self.display_angle = self.arrow_angle % (2 * math.pi)
         self.phase = self.display_angle
 
