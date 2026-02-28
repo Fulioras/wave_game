@@ -84,9 +84,8 @@ class PulseRing:
 # ---------------------------------------------------------------------------
 class PlayerState:
     """
-    Wave: original input-driven half-cycle cosine model (unchanged).
-    Arrow: separate arrow_angle accumulator that only ever increases (CCW, no jitter).
-    On idle the wave eases back to centre and the arrow glides back to 0°.
+    Wave generation based on known future inputs from queue.
+    Starts at middle, smoothly transitions to first peak, returns to middle when idle.
     """
     SETTLE_DURATION = 0.55
 
@@ -101,36 +100,26 @@ class PlayerState:
         self.signal_queue     = collections.deque()
         self.points           = collections.deque()
 
-        self.direction        = 1
-        self.half_period      = 1.0
-        self.cycle_active     = False
-        self.prev_accept_time = None
-
-        # Wave position state
-        self.cos_angle = math.pi / 2   # bounces 0↔π to drive y_norm
-        self.cos_dir   = 1             # +1 toward π, -1 toward 0
-        self.cos_speed = 0.0           # rad/s
-
-        self.settling      = False
-        self.settle_start  = time.time()
-        self.settle_from_y = 0.0
-
+        # Wave state - STARTS AT MIDDLE
+        self.current_y_norm   = 0.0  # Start at center
+        self.current_direction = 1
+        self.last_peak_time   = None
+        
         self.ever_had_input = False
+        self.first_input_time = None  # Track when first input arrives
 
         self.frequency     = 0.0
         self.phase         = 0.0
-        self.y_norm        = 0.0
 
-        # Arrow-only accumulator: never reset, never reversed.
-        # Advances at π rad per half-period → one full revolution per wave cycle.
-        self.arrow_angle       = 0.0   # raw accumulator (grows without bound)
-        self.arrow_speed       = 0.0   # rad/s; mirrors cos_speed
-        self.display_angle     = 0.0   # arrow_angle % 2π
+        # Arrow accumulator
+        self.arrow_angle       = 0.0
+        self.arrow_speed       = 0.0
+        self.display_angle     = 0.0
 
         # Idle return state
-        self._idle_returning   = False  # True while arrow is gliding back to 0°
-        self._idle_wave_from   = 0.0    # y_norm snapshot when idle return started
-        self._idle_wave_t      = 0.0    # elapsed time since idle wave return began
+        self._idle_returning   = False
+        self._idle_wave_from   = 0.0
+        self._idle_wave_t      = 0.0
 
     def queue_signal(self, signal, current_time):
         if signal == self.last_signal:
@@ -138,83 +127,124 @@ class PlayerState:
         self.last_signal     = signal
         self.last_input_time = current_time
         direction = 1 if signal == 'u' else -1
+        
+        # Track first input
+        if not self.ever_had_input:
+            self.first_input_time = current_time
+            self.ever_had_input = True
+        
         self.signal_queue.append((current_time + INPUT_DELAY, direction))
 
-    # ------------------------------------------------------------------
+    def _calculate_wave_position(self, current_time):
+        """
+        Calculate wave position based on known future inputs in queue.
+        First input creates smooth rise from middle to peak.
+        Returns (y_norm, frequency, arrow_speed)
+        """
+        if not self.signal_queue:
+            # No future inputs
+            if self.last_peak_time is None:
+                # Never had any input - stay at middle
+                return 0.0, 0.0, 0.0
+            else:
+                # Predict next input at INPUT_DELAY from now
+                predicted_peak_time = current_time + INPUT_DELAY
+                half_period = predicted_peak_time - self.last_peak_time
+                time_since_peak = current_time - self.last_peak_time
+                
+                if half_period > 0.001:
+                    progress = min(time_since_peak / half_period, 1.0)
+                    # Cosine from last peak back to center
+                    y_norm = self.current_direction * math.cos(progress * math.pi)
+                    frequency = 1.0 / (half_period * 2)
+                    arrow_speed = math.pi / half_period
+                else:
+                    y_norm = 0.0
+                    frequency = 0.0
+                    arrow_speed = 0.0
+                    
+        else:
+            # Have future inputs - calculate based on next peak
+            next_peak_time, next_direction = self.signal_queue[0]
+            
+            if self.last_peak_time is None:
+                # FIRST INPUT - smooth rise from middle (0) to peak
+                # The wave should reach the peak exactly when input takes effect
+                time_until_peak = next_peak_time - current_time
+                time_since_queue = current_time - self.first_input_time
+                total_rise_time = INPUT_DELAY  # Total time from queue to peak
+                
+                if total_rise_time > 0.001:
+                    # Progress from 0 (when queued) to 1 (at peak)
+                    progress = min(time_since_queue / total_rise_time, 1.0)
+                    # Smooth rise: use (1 - cos) to go from 0 to 1
+                    y_norm = next_direction * (1.0 - math.cos(progress * math.pi)) / 2.0
+                    # This goes from 0 at start to next_direction at peak
+                    # Actually we want full amplitude, so:
+                    y_norm = next_direction * math.sin(progress * math.pi / 2.0)
+                    
+                    frequency = 1.0 / (total_rise_time * 2)
+                    arrow_speed = math.pi / total_rise_time
+                else:
+                    y_norm = 0.0
+                    frequency = 0.0
+                    arrow_speed = 0.0
+                    
+            else:
+                # Subsequent inputs - normal wave from peak to peak
+                half_period = next_peak_time - self.last_peak_time
+                time_in_cycle = current_time - self.last_peak_time
+                
+                if half_period > 0.001:
+                    progress = min(time_in_cycle / half_period, 1.0)
+                    
+                    if progress > 1.0:
+                        y_norm = next_direction
+                    else:
+                        # Full cosine from one peak to another
+                        y_norm = self.current_direction * math.cos(progress * math.pi)
+                    
+                    frequency = 1.0 / (half_period * 2)
+                    arrow_speed = math.pi / half_period
+                else:
+                    y_norm = self.current_y_norm
+                    frequency = 0.0
+                    arrow_speed = 0.0
+        
+        return y_norm, frequency, arrow_speed
+
     def update(self, dt, current_time, amplitude):
         idle = (current_time - self.last_input_time) > IDLE_RESET_TIME
 
-        # --- fire queued inputs ---
+        # Process any inputs that have reached their fire time
         while self.signal_queue and current_time >= self.signal_queue[0][0]:
             fire_time, direction = self.signal_queue.popleft()
+            self.last_peak_time = fire_time
+            self.current_direction = direction
+            self._idle_returning = False
 
-            if self.prev_accept_time is not None:
-                gap = fire_time - self.prev_accept_time
-                if 0.05 < gap < 5.0:
-                    self.half_period = gap
-                    self.frequency   = 1.0 / (gap * 2)
-
-            self.prev_accept_time  = fire_time
-            self.direction         = direction
-            self.cycle_active      = True
-            self.settling          = False
-            self.ever_had_input    = True
-            self._idle_returning   = False   # cancel any idle return
-
-            # Wave: reset cos_angle to match current position, sweep toward peak
-            self.cos_speed = math.pi / self.half_period
-            clamped        = max(-1.0, min(1.0, self.y_norm * direction))
-            self.cos_angle = math.acos(clamped)
-            self.cos_dir   = -1   # head toward 0 (peak)
-
-            # Arrow: just update speed — angle keeps rolling, no reset
-            self.arrow_speed = math.pi / self.half_period
-
-        # --- idle: begin return if not already doing so ---
+        # Begin idle return if needed - DRIFT BACK TO MIDDLE
         if idle and self.ever_had_input and not self._idle_returning:
             self._idle_returning  = True
-            self._idle_wave_from  = self.y_norm
+            self._idle_wave_from  = self.current_y_norm
             self._idle_wave_t     = 0.0
-            # Zero out active wave motion so we own y_norm ourselves
-            self.cycle_active   = False
-            self.settling       = False
-            self.cos_speed      = 0.0
-            self.arrow_speed    = 0.0
-            self.frequency      = 0.0
-            self.last_signal    = None
-            self.prev_accept_time = None
+            self.frequency        = 0.0
+            self.arrow_speed      = 0.0
+            self.last_signal      = None
+            self.last_peak_time   = None
+            self.first_input_time = None
 
-        # Full hard reset once we're truly done returning (handled below)
-
-        # --- advance wave angle (bouncing 0↔π) --- only when not idle-returning
-        if not self._idle_returning and self.cycle_active and self.cos_speed > 0:
-            self.cos_angle += self.cos_dir * self.cos_speed * dt
-
-            if self.cos_angle <= 0.0:
-                self.cos_angle = -self.cos_angle
-                self.cos_dir   = 1
-
-            if self.cos_angle >= math.pi:
-                self.cos_angle     = math.pi
-                self.cycle_active  = False
-                self.settling      = True
-                self.settle_start  = current_time
-                self.settle_from_y = -self.direction
-
-        # --- advance arrow angle ---
-        if not self._idle_returning and self.arrow_speed > 0:
-            self.arrow_angle += self.arrow_speed * dt
-
-        # --- idle return: ease wave to 0 and arrow back to 0° ---
+        # Calculate wave position
         if self._idle_returning:
+            # Idle return animation - DRIFT TO MIDDLE
             self._idle_wave_t += dt
 
-            # Wave eases to centre
+            # Wave eases to center (middle)
             wave_frac = min(self._idle_wave_t / IDLE_WAVE_SETTLE, 1.0)
-            wave_ease = 1.0 - (1.0 - wave_frac) ** 3   # cubic ease-out
+            wave_ease = 1.0 - (1.0 - wave_frac) ** 3  # cubic ease-out
             y_norm    = self._idle_wave_from * (1.0 - wave_ease)
 
-            # Arrow glides to nearest multiple of 2π (i.e. the 0° mark)
+            # Arrow glides to 0°
             target_angle = round(self.arrow_angle / (2 * math.pi)) * 2 * math.pi
             diff         = target_angle - self.arrow_angle
             step         = IDLE_RETURN_SPEED * dt
@@ -225,45 +255,36 @@ class PlayerState:
                 self.arrow_angle += math.copysign(step, diff)
                 arrow_done        = False
 
-            # When both are done, perform a full clean reset
+            # Full reset when done - BACK TO MIDDLE STATE
             if wave_frac >= 1.0 and arrow_done:
                 self._idle_returning  = False
                 self.ever_had_input   = False
                 self.arrow_angle      = 0.0
-                y_norm                = 0.0
+                y_norm                = 0.0  # Middle
 
-            self.y_norm = y_norm
-
+            self.current_y_norm = y_norm
+            self.frequency = 0.0
+            
         else:
-            # --- compute y_norm normally ---
-            if not self.ever_had_input:
-                y_norm = 0.0
-            elif self.cycle_active:
-                y_norm = self.direction * math.cos(self.cos_angle)
-            elif self.settling:
-                t    = current_time - self.settle_start
-                frac = min(t / self.SETTLE_DURATION, 1.0)
-                ease = 1.0 - (1.0 - frac) ** 2
-                y_norm = self.settle_from_y * (1.0 - ease)
-                if frac >= 1.0:
-                    self.settling = False
-                    y_norm = 0.0
-            else:
-                y_norm = 0.0
-
-            self.y_norm = y_norm
+            # Calculate wave based on queue
+            y_norm, frequency, arrow_speed = self._calculate_wave_position(current_time)
+            self.current_y_norm = y_norm
+            self.frequency = frequency
+            self.arrow_speed = arrow_speed
+            
+            # Advance arrow
+            if self.arrow_speed > 0:
+                self.arrow_angle += self.arrow_speed * dt
 
         self.display_angle = self.arrow_angle % (2 * math.pi)
-
-        # phase for sync detection
         self.phase = self.display_angle
 
-        # --- scroll trail ---
+        # Scroll trail
         for i in range(len(self.points)):
             x, y = self.points[i]
             self.points[i] = (x - self.wave_speed * dt, y)
 
-        new_y = (self.window_h / 2) + amplitude * self.y_norm
+        new_y = (self.window_h / 2) + amplitude * self.current_y_norm
         self.points.append((self.wave_w, new_y))
         if self.points and self.points[0][0] < 0:
             self.points.popleft()
@@ -448,7 +469,7 @@ class MuseumSyncGame(pyglet.window.Window):
 
     # ------------------------------------------------------------------
     def _tip_pos(self, player):
-        return self.WAVE_AREA_W, (self.height / 2) + self.AMPLITUDE * player.y_norm
+        return self.WAVE_AREA_W, (self.height / 2) + self.AMPLITUDE * player.current_y_norm
 
     def _fire_pulse(self, pulses, idx_attr, player):
         tx, ty = self._tip_pos(player)
