@@ -17,25 +17,33 @@ PULSE_SPEED = 1.5
 NEON_GLOW_STRENGTH = 0.6
 
 SYNC_FREQ_TOLERANCE  = 0.10
-SYNC_PHASE_TOLERANCE = 0.20
+SYNC_PHASE_TOLERANCE = 0.5
 
-WAVE_GLOW_THICK_RATIO   = 0.011
-WAVE_CORE_THICK_RATIO   = 0.007
+# --- THICKNESS & SIZING RATIOS ---
+WAVE_GLOW_THICK_RATIO   = 0.020
+WAVE_CORE_THICK_RATIO   = 0.014
 WAVE_CENTER_THICK_RATIO = 0.004
 PHASOR_LINE_THICK_RATIO = 0.003
-AXIS_LINE_THICK_RATIO   = 0.001
+AXIS_LINE_THICK_RATIO   = 0.002
 ARROW_HEAD_SIZE_RATIO   = 0.018
 WAVE_END_DOT_RATIO      = 0.007
+WAVE_END_DOT_CORE_RATIO = 0.0035
+
+# --- GRID CONFIGURATION ---
+GRID_CELL_W = 120
+GRID_CELL_H = 240
+GRID_STYLE  = "endless"          # "closed" (bounded box) or "endless" (fills the wave area)
+GRID_COLOR  = (255, 255, 255, 75)
 
 PULSE_MAX_RADIUS_RATIO = 0.25
 PULSE_INTERVAL         = 0.9
 
 WAVE_WIDTH_PERCENT = 0.65
-AXIS_LABEL_X = "TIME (t)"
-AXIS_LABEL_Y = "PHASE (Ph)"
+AXIS_LABEL_X = "Laikas (t)"
+AXIS_LABEL_Y = "Įtampa (I)"
 
-P1_COLOR = (0, 255, 255)
-P2_COLOR = (255, 0, 255)
+P1_COLOR = (120, 200, 120)
+P2_COLOR = (0, 150, 200)
 WHITE    = (255, 255, 255)
 
 
@@ -260,13 +268,15 @@ class MuseumSyncGame(pyglet.window.Window):
 
         diag = math.hypot(self.width, self.height)
 
-        self.WAVE_GLOW_THICK   = max(2, int(diag * WAVE_GLOW_THICK_RATIO))
-        self.WAVE_CORE_THICK   = max(1, int(diag * WAVE_CORE_THICK_RATIO))
-        self.WAVE_CENTER_THICK = max(1, int(diag * WAVE_CENTER_THICK_RATIO))
-        self.PHASOR_LINE_THICK = max(1, int(diag * PHASOR_LINE_THICK_RATIO))
-        self.AXIS_LINE_THICK   = max(1, int(diag * AXIS_LINE_THICK_RATIO))
-        self.ARROW_HEAD_SIZE   = max(8, int(diag * ARROW_HEAD_SIZE_RATIO))
-        self.WAVE_END_DOT_R    = max(4, int(diag * WAVE_END_DOT_RATIO))
+        self.WAVE_GLOW_THICK     = max(2, int(diag * WAVE_GLOW_THICK_RATIO))
+        self.WAVE_CORE_THICK     = max(1, int(diag * WAVE_CORE_THICK_RATIO))
+        self.WAVE_CENTER_THICK   = max(1, int(diag * WAVE_CENTER_THICK_RATIO))
+        self.PHASOR_LINE_THICK   = max(1, int(diag * PHASOR_LINE_THICK_RATIO))
+        self.AXIS_LINE_THICK     = max(1, int(diag * AXIS_LINE_THICK_RATIO))
+        self.ARROW_HEAD_SIZE     = max(8, int(diag * ARROW_HEAD_SIZE_RATIO))
+        self.WAVE_END_DOT_R      = max(4, int(diag * WAVE_END_DOT_RATIO))
+        self.WAVE_END_DOT_CORE_R = max(2, int(diag * WAVE_END_DOT_CORE_RATIO))
+        
         self.PULSE_MAX_RADIUS  = self.height * PULSE_MAX_RADIUS_RATIO
         self.PULSE_EXPAND_SPD  = self.PULSE_MAX_RADIUS * PULSE_SPEED
 
@@ -284,8 +294,10 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p1 = PlayerState(P1_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
         self.p2 = PlayerState(P2_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
 
+        self._create_background_grid()
+
         self.axis_h = shapes.Line(
-            50, self.height / 2, self.WAVE_AREA_W, self.height / 2,
+            50, self.height / 2, self.WAVE_AREA_W + 20, self.height / 2,
             thickness=self.AXIS_LINE_THICK, color=(*WHITE, 255), batch=self.batch)
         self.axis_v = shapes.Line(
             50, self.height / 2 - self.AMPLITUDE - 20,
@@ -303,24 +315,27 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p2_layers = self._create_neon_wave(P2_COLOR)
 
         self.p1_dot_glow = shapes.Circle(0, 0, self.WAVE_END_DOT_R * 2,
-                                          color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)),
-                                          batch=self.fg_batch)
+                                          color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.fg_batch)
         self.p1_dot      = shapes.Circle(0, 0, self.WAVE_END_DOT_R,
                                           color=(*P1_COLOR, 255), batch=self.fg_batch)
+        self.p1_dot_core = shapes.Circle(0, 0, self.WAVE_END_DOT_CORE_R,
+                                          color=(*WHITE, 255), batch=self.top_batch)
+                                          
         self.p2_dot_glow = shapes.Circle(0, 0, self.WAVE_END_DOT_R * 2,
-                                          color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)),
-                                          batch=self.fg_batch)
+                                          color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.fg_batch)
         self.p2_dot      = shapes.Circle(0, 0, self.WAVE_END_DOT_R,
                                           color=(*P2_COLOR, 255), batch=self.fg_batch)
+        self.p2_dot_core = shapes.Circle(0, 0, self.WAVE_END_DOT_CORE_R,
+                                          color=(*WHITE, 255), batch=self.top_batch)
 
         self.pizza_slice = shapes.Sector(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(255, 255, 255, 40), batch=self.batch)
         self.phasor_bg   = shapes.Circle(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(15, 15, 15), batch=self.batch)
 
-        web_color   = (255, 255, 255, 40)
-        ring_color  = (255, 255, 255, 30)
-        spoke_thick = max(1, int(diag * 0.0005))
+        web_color   = (255, 255, 255, 75)
+        ring_color  = (255, 255, 255, 100)
+        spoke_thick = max(1, int(diag * 0.001))
 
         N_RIM = 120
         self.rim_lines = []
@@ -388,6 +403,53 @@ class MuseumSyncGame(pyglet.window.Window):
 
         self.sync_timer = 0.0
         pyglet.clock.schedule_interval(self.update, 1 / 60.0)
+
+    def _create_background_grid(self):
+        self.bg_grid_lines = []
+        
+        if GRID_STYLE == "closed":
+            min_y = int(self.height / 2 - self.AMPLITUDE - 20)
+            max_y = int(self.height / 2 + self.AMPLITUDE + 20)
+            min_x = 50
+            max_x = int(self.WAVE_AREA_W)
+        else:
+            min_y = 0
+            max_y = self.height
+            min_x = 0
+            max_x = int(self.WAVE_AREA_W)
+
+        cy = self.height / 2
+        y_offsets = [0]
+        i = 1
+        while cy + i * GRID_CELL_H <= max_y: 
+            y_offsets.append(i * GRID_CELL_H)
+            i += 1
+        i = 1
+        while cy - i * GRID_CELL_H >= min_y: 
+            y_offsets.append(-i * GRID_CELL_H)
+            i += 1
+
+        for offset in y_offsets:
+            y = cy + offset
+            self.bg_grid_lines.append(shapes.Line(min_x, y, max_x, y, color=GRID_COLOR, batch=self.batch))
+
+        cx = max_x
+        x_offsets = [0]
+        i = 1
+        while cx - i * GRID_CELL_W >= min_x: 
+            x_offsets.append(-i * GRID_CELL_W)
+            i += 1
+
+        for offset in x_offsets:
+            x = cx + offset
+            self.bg_grid_lines.append(shapes.Line(x, min_y, x, max_y, thickness = 4, color=GRID_COLOR, batch=self.batch))
+
+        if GRID_STYLE == "closed":
+            border_thick = 2
+            self.bg_grid_lines.append(shapes.Line(min_x, min_y, max_x, min_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(min_x, max_y, max_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(min_x, min_y, min_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(max_x, min_y, max_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
 
     def _create_neon_wave(self, color):
         return (
@@ -508,11 +570,14 @@ class MuseumSyncGame(pyglet.window.Window):
             self.sync_label.color = (0, 255, 100, 255) if prog >= 100 else (255, 255, 255, 255)
 
     def _update_end_dots(self):
-        for player, glow, dot in ((self.p1, self.p1_dot_glow, self.p1_dot),
-                                   (self.p2, self.p2_dot_glow, self.p2_dot)):
+        for player, glow, dot, core in (
+            (self.p1, self.p1_dot_glow, self.p1_dot, self.p1_dot_core),
+            (self.p2, self.p2_dot_glow, self.p2_dot, self.p2_dot_core)
+        ):
             tx, ty = self._tip_pos(player)
             glow.x, glow.y = tx, ty
             dot.x,  dot.y  = tx, ty
+            core.x, core.y = tx, ty
 
     def _render_neon_wave(self, player, layers):
         pts = player.points
