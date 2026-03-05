@@ -5,6 +5,7 @@ import math
 import time
 import collections
 
+# configuration, not all things are in configuration, some values need to be found manually.
 SYNC_DURATION = 5.0
 INPUT_DELAY = 2
 WAVE_RESOLUTION = 250
@@ -264,7 +265,7 @@ class PlayerState:
 
 class MuseumSyncGame(pyglet.window.Window):
     def __init__(self):
-        super().__init__(fullscreen=True, caption="Grid Sync")
+        super().__init__(fullscreen=True, caption="CESA-Baltic frequency convergence")
 
         diag = math.hypot(self.width, self.height)
 
@@ -384,14 +385,44 @@ class MuseumSyncGame(pyglet.window.Window):
                 anchor_x=ax, anchor_y=ay,
                 color=(200, 200, 200, 180), batch=self.batch))
 
+        # CESA - BALTIC player indicator circles below phasor diagram
+        indicator_radius = max(20, diag * 0.004)
+        indicator_y = self.PH_CY - self.PH_RADIUS - self.height * 0.15
+        self.p1_indicator_glow = shapes.Circle(
+            self.PH_CX - 80, indicator_y, indicator_radius * 1.5,
+            color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
+        self.p1_indicator = shapes.Circle(
+            self.PH_CX - 80, indicator_y, indicator_radius,
+            color=(*P1_COLOR, 255), batch=self.batch)
+        self.p1_indicator_label = pyglet.text.Label(
+            "CESA", font_size=16,
+            x=self.PH_CX - 80, y=indicator_y - 45,
+            anchor_x='center', anchor_y='top', batch=self.batch)
+
+        self.p2_indicator_glow = shapes.Circle(
+            self.PH_CX + 80, indicator_y, indicator_radius * 1.5,
+            color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
+        self.p2_indicator = shapes.Circle(
+            self.PH_CX + 80, indicator_y, indicator_radius,
+            color=(*P2_COLOR, 255), batch=self.batch)
+        self.p2_indicator_label = pyglet.text.Label(
+            "Baltic", font_size=16,
+            x=self.PH_CX + 80, y=indicator_y - 45,
+            anchor_x='center', anchor_y='top', batch=self.batch)
+
+        # SYNC PROGRESS CIRCLE (the one that expands) in center of phasor
+        self.sync_circle = shapes.Circle(
+            self.PH_CX, self.PH_CY, 0,
+            color=(0, 255, 100, 100), batch=self.batch)
+
         self.p1_arrow = self._create_arrow(P1_COLOR)
         self.p2_arrow = self._create_arrow(P2_COLOR)
 
-        label_font = max(16, int(diag * 0.014))
+        label_font = max(16, int(diag * 0.015))
         self.sync_label = pyglet.text.Label(
             "READY", font_size=label_font,
-            x=self.width / 2, y=self.height * 0.9,
-            anchor_x='center', batch=self.batch)
+            x=diag * 0.72, y=self.height - self.height * 0.1,
+            anchor_x='center', anchor_y='top', batch=self.batch)
         self.last_sync_prog = -1
 
         self.p1_pulses    = [PulseRing(P1_COLOR, self.fg_batch) for _ in range(3)]
@@ -557,6 +588,10 @@ class MuseumSyncGame(pyglet.window.Window):
         else:
             self.sync_timer = max(0.0, self.sync_timer - dt * 2)
 
+        # Update sync circle radius based on sync progress
+        sync_frac = self.sync_timer / SYNC_DURATION
+        self.sync_circle.radius = sync_frac * (self.PH_RADIUS * 1)
+
         self._render_neon_wave(self.p1, self.p1_layers)
         self._render_neon_wave(self.p2, self.p2_layers)
         self._update_end_dots()
@@ -566,7 +601,7 @@ class MuseumSyncGame(pyglet.window.Window):
         prog = int((self.sync_timer / SYNC_DURATION) * 100)
         if prog != self.last_sync_prog:
             self.last_sync_prog = prog
-            self.sync_label.text  = "STABLE CONNECTION" if prog >= 100 else f"SYNC: {prog}%"
+            self.sync_label.text  = "Sinchronizacija pasiekta" if prog >= 100 else f"{prog}%"
             self.sync_label.color = (0, 255, 100, 255) if prog >= 100 else (255, 255, 255, 255)
 
     def _update_end_dots(self):
