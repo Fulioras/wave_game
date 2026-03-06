@@ -5,51 +5,52 @@ import math
 import time
 import collections
 
-# --- CONFIGURATION (Customize for the exhibit) ---
-SYNC_DURATION = 5.0        # Seconds to hold sync to win
-INPUT_DELAY = 2            # Seconds before an input takes effect (smooths the wave trail)
-WAVE_RESOLUTION = 250      # Quality of the trail (more = smoother)
+# configuration, not all things are in configuration, some values need to be found manually.
+SYNC_DURATION = 5.0
+INPUT_DELAY = 2
+WAVE_RESOLUTION = 250
 
-# IDLE BEHAVIOUR
-IDLE_RESET_TIME   = 4.0   # Seconds of no input before idle state begins
-IDLE_RETURN_SPEED = 4.0   # How fast (rad/s) the arrow returns to 0° when idle
-IDLE_WAVE_SETTLE  = 1.2   # Seconds for the wave to ease back to centre when idle
+IDLE_RESET_TIME   = 4.0
+IDLE_RETURN_SPEED = 4.0
+IDLE_WAVE_SETTLE  = 1.2
 
-PULSE_SPEED = 1.5          # Multiplier for how fast attract rings expand
+PULSE_SPEED = 1.5
 NEON_GLOW_STRENGTH = 0.6
 
-# SYNC DIFFICULTY — how closely players must match to count as synced
-# Lower = harder.  Suggested range: easy=0.2/0.15, medium=0.10/0.20, hard=0.05/0.08
-SYNC_FREQ_TOLERANCE  = 0.10   # Max allowed |f1 - f2| in Hz
-SYNC_PHASE_TOLERANCE = 0.20   # Max allowed phase difference in radians (~11 deg)
+SYNC_FREQ_TOLERANCE  = 0.10
+SYNC_PHASE_TOLERANCE = 0.5 # tolerance is in radians (1 rad is about 11 degrees)
 
-# THICKNESS CONFIG — fractions of screen diagonal
-WAVE_GLOW_THICK_RATIO   = 0.011
-WAVE_CORE_THICK_RATIO   = 0.007
+# --- THICKNESS & SIZING RATIOS ---
+WAVE_GLOW_THICK_RATIO   = 0.020
+WAVE_CORE_THICK_RATIO   = 0.014
 WAVE_CENTER_THICK_RATIO = 0.004
 PHASOR_LINE_THICK_RATIO = 0.003
-AXIS_LINE_THICK_RATIO   = 0.001
+AXIS_LINE_THICK_RATIO   = 0.002
 ARROW_HEAD_SIZE_RATIO   = 0.018
-WAVE_END_DOT_RATIO      = 0.007   # radius of rounded cap at wave tip
+WAVE_END_DOT_RATIO      = 0.007
+WAVE_END_DOT_CORE_RATIO = 0.0035
 
-# PULSE CONFIG
-PULSE_MAX_RADIUS_RATIO = 0.25    # max radius as fraction of screen height
-PULSE_INTERVAL         = 0.9     # seconds between attract pulses when idle
+# --- GRID CONFIGURATION ---
+GRID_CELL_W = 120
+GRID_CELL_H = 240
+GRID_STYLE  = "endless"          # "closed" (bounded box) or "endless" (fills the wave area)
+GRID_COLOR  = (255, 255, 255, 75)
 
-# WAVE LAYOUT
+PULSE_MAX_RADIUS_RATIO = 0.25
+PULSE_INTERVAL         = 0.9
+
 WAVE_WIDTH_PERCENT = 0.65
-AXIS_LABEL_X = "TIME (t)"
-AXIS_LABEL_Y = "PHASE (Ph)"
+AXIS_LABEL_X = "Laikas (t)"
+AXIS_LABEL_Y = "Įtampa (I)"
 
-# Colors (RGB)
-P1_COLOR = (0, 255, 255)    # Cyan
-P2_COLOR = (255, 0, 255)    # Magenta
+P1_COLOR = (120, 200, 120)
+P2_COLOR = (0, 150, 200)
 WHITE    = (255, 255, 255)
 
 
-# ---------------------------------------------------------------------------
 class PulseRing:
-    """Expanding circle ring that fades out — used for attract and wave-tip pulses."""
+    __slots__ = ['color', 'circle', 'active', 'radius', 'max_radius']
+
     def __init__(self, color, batch):
         self.color  = color
         self.circle = shapes.Circle(0, 0, 1, color=(*color, 0), batch=batch)
@@ -81,12 +82,7 @@ class PulseRing:
         self.circle.visible = True
 
 
-# ---------------------------------------------------------------------------
 class PlayerState:
-    """
-    Wave generation based on known future inputs from queue.
-    Integrates the direct quadrant-mapping logic for the circular arrow angle.
-    """
     SETTLE_DURATION = 0.55
 
     def __init__(self, color, window_h, wave_w, wave_speed):
@@ -99,23 +95,21 @@ class PlayerState:
         self.last_input_time  = time.time()
         self.signal_queue     = collections.deque()
         self.points           = collections.deque()
+        self.total_scroll     = 0.0
 
-        # Wave state - STARTS AT MIDDLE
-        self.current_y_norm   = 0.0  # Start at center
+        self.current_y_norm   = 0.0
         self.current_direction = 1
         self.last_peak_time   = None
         
         self.ever_had_input = False
-        self.first_input_time = None  # Track when first input arrives
+        self.first_input_time = None
 
         self.frequency     = 0.0
         self.phase         = 0.0
 
-        # Arrow mapped state
         self.arrow_angle       = 0.0
         self.display_angle     = 0.0
 
-        # Idle return state
         self._idle_returning   = False
         self._idle_wave_from   = 0.0
         self._idle_wave_t      = 0.0
@@ -127,7 +121,6 @@ class PlayerState:
         self.last_input_time = current_time
         direction = 1 if signal == 'u' else -1
         
-        # Track first input
         if not self.ever_had_input:
             self.first_input_time = current_time
             self.ever_had_input = True
@@ -135,34 +128,22 @@ class PlayerState:
         self.signal_queue.append((current_time + INPUT_DELAY, direction))
 
     def _calculate_wave_position(self, current_time):
-        """
-        Calculate wave position based on known future inputs in queue.
-        Calculates and returns the precise quadrant target angle for the circular graph.
-        Returns (y_norm, frequency, target_arrow_angle)
-        """
         if not self.signal_queue:
-            # No future inputs
             if self.last_peak_time is None:
-                # Never had any input - stay at middle
                 return 0.0, 0.0, self.arrow_angle
             else:
-                # Predict next input at INPUT_DELAY from now
                 predicted_peak_time = current_time + INPUT_DELAY
                 half_period = predicted_peak_time - self.last_peak_time
                 time_since_peak = current_time - self.last_peak_time
                 
                 if half_period > 0.001:
                     progress = min(time_since_peak / half_period, 1.0)
-                    # Cosine from last peak to opposite peak
                     y_norm = self.current_direction * math.cos(progress * math.pi)
                     frequency = 1.0 / (half_period * 2)
                     
-                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
                     if self.current_direction == 1:
-                        # Peak +1 going to -1: Sweeps 90° to 270° (Quadrants 2 & 3)
                         target_angle = (math.pi / 2) + progress * math.pi
                     else:
-                        # Peak -1 going to +1: Sweeps 270° to 450°/90° (Quadrants 4 & 1)
                         target_angle = (3 * math.pi / 2) + progress * math.pi
                 else:
                     y_norm = 0.0
@@ -170,13 +151,11 @@ class PlayerState:
                     target_angle = self.arrow_angle
                     
         else:
-            # Have future inputs - calculate based on next peak
             next_peak_time, next_direction = self.signal_queue[0]
             
             if self.last_peak_time is None:
-                # FIRST INPUT - smooth rise from middle (0) to peak
                 time_until_peak = next_peak_time - current_time
-                time_since_queue = current_time - self.first_input_time
+                time_since_queue = current_time - (self.first_input_time or current_time)
                 total_rise_time = INPUT_DELAY
                 
                 if total_rise_time > 0.001:
@@ -184,12 +163,9 @@ class PlayerState:
                     y_norm = next_direction * math.sin(progress * math.pi / 2.0)
                     frequency = 1.0 / (total_rise_time * 2)
                     
-                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
                     if next_direction == 1:
-                        # Center to +1: Sweeps 0° to 90° (Quadrant 1)
                         target_angle = progress * (math.pi / 2)
                     else:
-                        # Center to -1: Sweeps 360° to 270° backward mapping to remain continuous (Quadrant 4)
                         target_angle = 2 * math.pi - progress * (math.pi / 2)
                 else:
                     y_norm = 0.0
@@ -197,27 +173,21 @@ class PlayerState:
                     target_angle = 0.0
                     
             else:
-                # SUBSEQUENT INPUTS - normal wave from peak to peak
                 half_period = next_peak_time - self.last_peak_time
                 time_in_cycle = current_time - self.last_peak_time
                 
                 if half_period > 0.001:
                     progress = min(time_in_cycle / half_period, 1.0)
-                    
                     if progress > 1.0:
                         y_norm = next_direction
                     else:
-                        # Full cosine from one peak to another
                         y_norm = self.current_direction * math.cos(progress * math.pi)
                     
                     frequency = 1.0 / (half_period * 2)
                     
-                    # --- CALCULATE ARROW ANGLE (QUADRANT LOGIC) ---
                     if self.current_direction == 1:
-                        # Peak +1 going to -1: Sweeps 90° to 270° (Quadrants 2 & 3)
                         target_angle = (math.pi / 2) + progress * math.pi
                     else:
-                        # Peak -1 going to +1: Sweeps 270° to 450°/90° (Quadrants 4 & 1)
                         target_angle = (3 * math.pi / 2) + progress * math.pi
                 else:
                     y_norm = self.current_y_norm
@@ -229,14 +199,12 @@ class PlayerState:
     def update(self, dt, current_time, amplitude):
         idle = (current_time - self.last_input_time) > IDLE_RESET_TIME
 
-        # Process any inputs that have reached their fire time
         while self.signal_queue and current_time >= self.signal_queue[0][0]:
             fire_time, direction = self.signal_queue.popleft()
             self.last_peak_time = fire_time
             self.current_direction = direction
             self._idle_returning = False
 
-        # Begin idle return if needed - DRIFT BACK TO MIDDLE
         if idle and self.ever_had_input and not self._idle_returning:
             self._idle_returning  = True
             self._idle_wave_from  = self.current_y_norm
@@ -246,17 +214,12 @@ class PlayerState:
             self.last_peak_time   = None
             self.first_input_time = None
 
-        # Calculate wave position
         if self._idle_returning:
-            # Idle return animation - DRIFT TO MIDDLE
             self._idle_wave_t += dt
-
-            # Wave eases to center (middle)
             wave_frac = min(self._idle_wave_t / IDLE_WAVE_SETTLE, 1.0)
-            wave_ease = 1.0 - (1.0 - wave_frac) ** 3  # cubic ease-out
+            wave_ease = 1.0 - (1.0 - wave_frac) ** 3
             y_norm    = self._idle_wave_from * (1.0 - wave_ease)
 
-            # Arrow glides to nearest visual 0° mark
             target_angle = round(self.arrow_angle / (2 * math.pi)) * 2 * math.pi
             diff         = target_angle - self.arrow_angle
             step         = IDLE_RETURN_SPEED * dt
@@ -267,52 +230,54 @@ class PlayerState:
                 self.arrow_angle += math.copysign(step, diff)
                 arrow_done        = False
 
-            # Full reset when done - BACK TO MIDDLE STATE
             if wave_frac >= 1.0 and arrow_done:
                 self._idle_returning  = False
                 self.ever_had_input   = False
                 self.arrow_angle      = 0.0
-                y_norm                = 0.0  # Middle
+                y_norm                = 0.0
 
             self.current_y_norm = y_norm
             self.frequency = 0.0
             
         else:
-            # Map wave based directly on target quadrant phase
             y_norm, frequency, target_angle = self._calculate_wave_position(current_time)
             self.current_y_norm = y_norm
             self.frequency = frequency
             self.arrow_angle = target_angle
 
-        # Apply modulo so drawing acts cleanly 0-360 mapped
         self.display_angle = self.arrow_angle % (2 * math.pi)
         self.phase = self.display_angle
 
-        # Scroll trail
-        for i in range(len(self.points)):
-            x, y = self.points[i]
-            self.points[i] = (x - self.wave_speed * dt, y)
+        self.total_scroll += self.wave_speed * dt
+        
+        if self.total_scroll > 10000.0:
+            for i in range(len(self.points)):
+                x, y = self.points[i]
+                self.points[i] = (x - self.total_scroll, y)
+            self.total_scroll = 0.0
 
         new_y = (self.window_h / 2) + amplitude * self.current_y_norm
-        self.points.append((self.wave_w, new_y))
-        if self.points and self.points[0][0] < 0:
+        self.points.append((self.wave_w + self.total_scroll, new_y))
+        
+        while self.points and (self.points[0][0] - self.total_scroll) < 0:
             self.points.popleft()
 
 
-# ---------------------------------------------------------------------------
 class MuseumSyncGame(pyglet.window.Window):
     def __init__(self):
-        super().__init__(fullscreen=True, caption="Grid Sync")
+        super().__init__(fullscreen=True, caption="CESA-Baltic frequency convergence")
 
         diag = math.hypot(self.width, self.height)
 
-        self.WAVE_GLOW_THICK   = max(2, int(diag * WAVE_GLOW_THICK_RATIO))
-        self.WAVE_CORE_THICK   = max(1, int(diag * WAVE_CORE_THICK_RATIO))
-        self.WAVE_CENTER_THICK = max(1, int(diag * WAVE_CENTER_THICK_RATIO))
-        self.PHASOR_LINE_THICK = max(1, int(diag * PHASOR_LINE_THICK_RATIO))
-        self.AXIS_LINE_THICK   = max(1, int(diag * AXIS_LINE_THICK_RATIO))
-        self.ARROW_HEAD_SIZE   = max(8, int(diag * ARROW_HEAD_SIZE_RATIO))
-        self.WAVE_END_DOT_R    = max(4, int(diag * WAVE_END_DOT_RATIO))
+        self.WAVE_GLOW_THICK     = max(2, int(diag * WAVE_GLOW_THICK_RATIO))
+        self.WAVE_CORE_THICK     = max(1, int(diag * WAVE_CORE_THICK_RATIO))
+        self.WAVE_CENTER_THICK   = max(1, int(diag * WAVE_CENTER_THICK_RATIO))
+        self.PHASOR_LINE_THICK   = max(1, int(diag * PHASOR_LINE_THICK_RATIO))
+        self.AXIS_LINE_THICK     = max(1, int(diag * AXIS_LINE_THICK_RATIO))
+        self.ARROW_HEAD_SIZE     = max(8, int(diag * ARROW_HEAD_SIZE_RATIO))
+        self.WAVE_END_DOT_R      = max(4, int(diag * WAVE_END_DOT_RATIO))
+        self.WAVE_END_DOT_CORE_R = max(2, int(diag * WAVE_END_DOT_CORE_RATIO))
+        
         self.PULSE_MAX_RADIUS  = self.height * PULSE_MAX_RADIUS_RATIO
         self.PULSE_EXPAND_SPD  = self.PULSE_MAX_RADIUS * PULSE_SPEED
 
@@ -323,15 +288,17 @@ class MuseumSyncGame(pyglet.window.Window):
         self.PH_CY       = self.height / 2
         self.PH_RADIUS   = min(self.width - self.WAVE_AREA_W, self.height) * 0.35
 
-        self.batch    = pyglet.graphics.Batch()
-        self.fg_batch = pyglet.graphics.Batch()
+        self.batch     = pyglet.graphics.Batch()
+        self.fg_batch  = pyglet.graphics.Batch()
+        self.top_batch = pyglet.graphics.Batch()
 
         self.p1 = PlayerState(P1_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
         self.p2 = PlayerState(P2_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
 
-        # Static axes
+        self._create_background_grid()
+
         self.axis_h = shapes.Line(
-            50, self.height / 2, self.WAVE_AREA_W, self.height / 2,
+            50, self.height / 2, self.WAVE_AREA_W + 20, self.height / 2,
             thickness=self.AXIS_LINE_THICK, color=(*WHITE, 255), batch=self.batch)
         self.axis_v = shapes.Line(
             50, self.height / 2 - self.AMPLITUDE - 20,
@@ -345,32 +312,31 @@ class MuseumSyncGame(pyglet.window.Window):
                                         x=60, y=self.height / 2 + self.AMPLITUDE + 25,
                                         batch=self.batch)
 
-        # Neon wave layers
         self.p1_layers = self._create_neon_wave(P1_COLOR)
         self.p2_layers = self._create_neon_wave(P2_COLOR)
 
-        # Rounded end-cap dots
         self.p1_dot_glow = shapes.Circle(0, 0, self.WAVE_END_DOT_R * 2,
-                                          color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)),
-                                          batch=self.fg_batch)
+                                          color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.fg_batch)
         self.p1_dot      = shapes.Circle(0, 0, self.WAVE_END_DOT_R,
                                           color=(*P1_COLOR, 255), batch=self.fg_batch)
+        self.p1_dot_core = shapes.Circle(0, 0, self.WAVE_END_DOT_CORE_R,
+                                          color=(*WHITE, 255), batch=self.top_batch)
+                                          
         self.p2_dot_glow = shapes.Circle(0, 0, self.WAVE_END_DOT_R * 2,
-                                          color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)),
-                                          batch=self.fg_batch)
+                                          color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.fg_batch)
         self.p2_dot      = shapes.Circle(0, 0, self.WAVE_END_DOT_R,
                                           color=(*P2_COLOR, 255), batch=self.fg_batch)
+        self.p2_dot_core = shapes.Circle(0, 0, self.WAVE_END_DOT_CORE_R,
+                                          color=(*WHITE, 255), batch=self.top_batch)
 
-        # Phasor background
         self.pizza_slice = shapes.Sector(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(255, 255, 255, 40), batch=self.batch)
         self.phasor_bg   = shapes.Circle(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(15, 15, 15), batch=self.batch)
 
-        # Circle graph web
-        web_color   = (255, 255, 255, 40)
-        ring_color  = (255, 255, 255, 30)
-        spoke_thick = max(1, int(diag * 0.0005))
+        web_color   = (255, 255, 255, 75)
+        ring_color  = (255, 255, 255, 100)
+        spoke_thick = max(1, int(diag * 0.001))
 
         N_RIM = 120
         self.rim_lines = []
@@ -419,14 +385,45 @@ class MuseumSyncGame(pyglet.window.Window):
                 anchor_x=ax, anchor_y=ay,
                 color=(200, 200, 200, 180), batch=self.batch))
 
+        # CESA - BALTIC player indicator circles below phasor diagram
+        indicator_radius = max(20, diag * 0.004)
+        indicator_y = self.PH_CY - self.PH_RADIUS - self.height * 0.15
+        self.p1_indicator_glow = shapes.Circle(
+            self.PH_CX - 80, indicator_y, indicator_radius * 1.5,
+            color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
+        self.p1_indicator = shapes.Circle(
+            self.PH_CX - 80, indicator_y, indicator_radius,
+            color=(*P1_COLOR, 255), batch=self.batch)
+        self.p1_indicator_label = pyglet.text.Label(
+            "CESA", font_size=16,
+            x=self.PH_CX - 80, y=indicator_y - 45,
+            anchor_x='center', anchor_y='top', batch=self.batch)
+
+        self.p2_indicator_glow = shapes.Circle(
+            self.PH_CX + 80, indicator_y, indicator_radius * 1.5,
+            color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
+        self.p2_indicator = shapes.Circle(
+            self.PH_CX + 80, indicator_y, indicator_radius,
+            color=(*P2_COLOR, 255), batch=self.batch)
+        self.p2_indicator_label = pyglet.text.Label(
+            "Baltic", font_size=16,
+            x=self.PH_CX + 80, y=indicator_y - 45,
+            anchor_x='center', anchor_y='top', batch=self.batch)
+
+        # SYNC PROGRESS CIRCLE (the one that expands) in center of phasor
+        self.sync_circle = shapes.Circle(
+            self.PH_CX, self.PH_CY, 0,
+            color=(0, 255, 100, 100), batch=self.batch)
+
         self.p1_arrow = self._create_arrow(P1_COLOR)
         self.p2_arrow = self._create_arrow(P2_COLOR)
 
-        label_font = max(16, int(diag * 0.014))
+        label_font = max(16, int(diag * 0.015))
         self.sync_label = pyglet.text.Label(
             "READY", font_size=label_font,
-            x=self.width / 2, y=self.height * 0.9,
-            anchor_x='center', batch=self.batch)
+            x=diag * 0.72, y=self.height - self.height * 0.1,
+            anchor_x='center', anchor_y='top', batch=self.batch)
+        self.last_sync_prog = -1
 
         self.p1_pulses    = [PulseRing(P1_COLOR, self.fg_batch) for _ in range(3)]
         self.p2_pulses    = [PulseRing(P2_COLOR, self.fg_batch) for _ in range(3)]
@@ -438,9 +435,55 @@ class MuseumSyncGame(pyglet.window.Window):
         self.sync_timer = 0.0
         pyglet.clock.schedule_interval(self.update, 1 / 60.0)
 
-    # ------------------------------------------------------------------
+    def _create_background_grid(self):
+        self.bg_grid_lines = []
+        
+        if GRID_STYLE == "closed":
+            min_y = int(self.height / 2 - self.AMPLITUDE - 20)
+            max_y = int(self.height / 2 + self.AMPLITUDE + 20)
+            min_x = 50
+            max_x = int(self.WAVE_AREA_W)
+        else:
+            min_y = 0
+            max_y = self.height
+            min_x = 0
+            max_x = int(self.WAVE_AREA_W)
+
+        cy = self.height / 2
+        y_offsets = [0]
+        i = 1
+        while cy + i * GRID_CELL_H <= max_y: 
+            y_offsets.append(i * GRID_CELL_H)
+            i += 1
+        i = 1
+        while cy - i * GRID_CELL_H >= min_y: 
+            y_offsets.append(-i * GRID_CELL_H)
+            i += 1
+
+        for offset in y_offsets:
+            y = cy + offset
+            self.bg_grid_lines.append(shapes.Line(min_x, y, max_x, y, color=GRID_COLOR, batch=self.batch))
+
+        cx = max_x
+        x_offsets = [0]
+        i = 1
+        while cx - i * GRID_CELL_W >= min_x: 
+            x_offsets.append(-i * GRID_CELL_W)
+            i += 1
+
+        for offset in x_offsets:
+            x = cx + offset
+            self.bg_grid_lines.append(shapes.Line(x, min_y, x, max_y, thickness = 4, color=GRID_COLOR, batch=self.batch))
+
+        if GRID_STYLE == "closed":
+            border_thick = 2
+            self.bg_grid_lines.append(shapes.Line(min_x, min_y, max_x, min_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(min_x, max_y, max_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(min_x, min_y, min_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+            self.bg_grid_lines.append(shapes.Line(max_x, min_y, max_x, max_y, thickness=border_thick, color=GRID_COLOR, batch=self.batch))
+
     def _create_neon_wave(self, color):
-        return [
+        return (
             [shapes.Line(0, 0, 0, 0, thickness=self.WAVE_GLOW_THICK,
                          color=(*color, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
              for _ in range(WAVE_RESOLUTION)],
@@ -448,9 +491,9 @@ class MuseumSyncGame(pyglet.window.Window):
                          color=(*color, 255), batch=self.batch)
              for _ in range(WAVE_RESOLUTION)],
             [shapes.Line(0, 0, 0, 0, thickness=self.WAVE_CENTER_THICK,
-                         color=(*WHITE, 255), batch=self.batch)
+                         color=(*WHITE, 255), batch=self.top_batch)
              for _ in range(WAVE_RESOLUTION)],
-        ]
+        )
 
     def _create_arrow(self, color):
         stem = shapes.Line(self.PH_CX, self.PH_CY, self.PH_CX, self.PH_CY + 1,
@@ -462,21 +505,30 @@ class MuseumSyncGame(pyglet.window.Window):
         return {'stem': stem, 'head': head}
 
     def _update_arrow(self, arrow, angle):
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        
         r       = self.PH_RADIUS * 0.85
-        tip_x   = self.PH_CX + r * math.cos(angle)
-        tip_y   = self.PH_CY + r * math.sin(angle)
-        shaft_x = self.PH_CX + (r - self.ARROW_HEAD_SIZE * 1.2) * math.cos(angle)
-        shaft_y = self.PH_CY + (r - self.ARROW_HEAD_SIZE * 1.2) * math.sin(angle)
+        tip_x   = self.PH_CX + r * cos_a
+        tip_y   = self.PH_CY + r * sin_a
+        
+        shaft_r = r - self.ARROW_HEAD_SIZE * 1.2
+        shaft_x = self.PH_CX + shaft_r * cos_a
+        shaft_y = self.PH_CY + shaft_r * sin_a
+        
         arrow['stem'].x,  arrow['stem'].y  = self.PH_CX, self.PH_CY
         arrow['stem'].x2, arrow['stem'].y2 = shaft_x, shaft_y
+        
         s = self.ARROW_HEAD_SIZE
+        cos_minus = math.cos(angle - 0.45)
+        sin_minus = math.sin(angle - 0.45)
+        cos_plus  = math.cos(angle + 0.45)
+        sin_plus  = math.sin(angle + 0.45)
+        
         arrow['head'].x,  arrow['head'].y  = tip_x, tip_y
-        arrow['head'].x2, arrow['head'].y2 = (tip_x - s * math.cos(angle - 0.45),
-                                               tip_y - s * math.sin(angle - 0.45))
-        arrow['head'].x3, arrow['head'].y3 = (tip_x - s * math.cos(angle + 0.45),
-                                               tip_y - s * math.sin(angle + 0.45))
+        arrow['head'].x2, arrow['head'].y2 = tip_x - s * cos_minus, tip_y - s * sin_minus
+        arrow['head'].x3, arrow['head'].y3 = tip_x - s * cos_plus, tip_y - s * sin_plus
 
-    # ------------------------------------------------------------------
     def _tip_pos(self, player):
         return self.WAVE_AREA_W, (self.height / 2) + self.AMPLITUDE * player.current_y_norm
 
@@ -499,9 +551,6 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p1.update(dt, now, self.AMPLITUDE)
         self.p2.update(dt, now, self.AMPLITUDE)
 
-        # A player is "idle" either if they've never pressed anything, or if
-        # IDLE_RESET_TIME has passed since their last input (including during
-        # the animated return phase).
         p1_idle = not self.p1.ever_had_input or (now - self.p1.last_input_time > IDLE_RESET_TIME)
         p2_idle = not self.p2.ever_had_input or (now - self.p2.last_input_time > IDLE_RESET_TIME)
 
@@ -524,21 +573,24 @@ class MuseumSyncGame(pyglet.window.Window):
         for p in self.p1_pulses + self.p2_pulses:
             p.update(dt, self.PULSE_EXPAND_SPD)
 
-        # Phasor slice
         p1_ang = self.p1.display_angle
         p2_ang = self.p2.display_angle
         diff   = (p1_ang - p2_ang + math.pi) % (2 * math.pi) - math.pi
         self.pizza_slice.start_angle = p2_ang
         self.pizza_slice.angle       = diff
 
-        # Sync detection
         f_diff      = abs(self.p1.frequency - self.p2.frequency)
         p_diff      = abs((self.p1.phase - self.p2.phase + math.pi) % (2 * math.pi) - math.pi)
         both_active = self.p1.frequency > 0.05 and self.p2.frequency > 0.05
+        
         if f_diff < SYNC_FREQ_TOLERANCE and p_diff < SYNC_PHASE_TOLERANCE and both_active:
             self.sync_timer = min(SYNC_DURATION, self.sync_timer + dt)
         else:
             self.sync_timer = max(0.0, self.sync_timer - dt * 2)
+
+        # Update sync circle radius based on sync progress
+        sync_frac = self.sync_timer / SYNC_DURATION
+        self.sync_circle.radius = sync_frac * (self.PH_RADIUS * 1)
 
         self._render_neon_wave(self.p1, self.p1_layers)
         self._render_neon_wave(self.p2, self.p2_layers)
@@ -547,33 +599,49 @@ class MuseumSyncGame(pyglet.window.Window):
         self._update_arrow(self.p2_arrow, self.p2.display_angle)
 
         prog = int((self.sync_timer / SYNC_DURATION) * 100)
-        self.sync_label.text  = "STABLE CONNECTION" if prog >= 100 else f"SYNC: {prog}%"
-        self.sync_label.color = (0, 255, 100, 255) if prog >= 100 else (255, 255, 255, 255)
+        if prog != self.last_sync_prog:
+            self.last_sync_prog = prog
+            self.sync_label.text  = "Sinchronizacija pasiekta" if prog >= 100 else f"{prog}%"
+            self.sync_label.color = (0, 255, 100, 255) if prog >= 100 else (255, 255, 255, 255)
 
     def _update_end_dots(self):
-        for player, glow, dot in ((self.p1, self.p1_dot_glow, self.p1_dot),
-                                   (self.p2, self.p2_dot_glow, self.p2_dot)):
+        for player, glow, dot, core in (
+            (self.p1, self.p1_dot_glow, self.p1_dot, self.p1_dot_core),
+            (self.p2, self.p2_dot_glow, self.p2_dot, self.p2_dot_core)
+        ):
             tx, ty = self._tip_pos(player)
             glow.x, glow.y = tx, ty
             dot.x,  dot.y  = tx, ty
+            core.x, core.y = tx, ty
 
     def _render_neon_wave(self, player, layers):
         pts = player.points
+        pts_len = len(pts)
+        scroll = player.total_scroll
+        l0, l1, l2 = layers
+        
         for i in range(WAVE_RESOLUTION):
-            if i < len(pts) - 1:
-                x1, y1, x2, y2 = *pts[i], *pts[i + 1]
-                for layer in layers:
-                    layer[i].x,  layer[i].y  = x1, y1
-                    layer[i].x2, layer[i].y2 = x2, y2
-                    layer[i].visible = True
+            if i < pts_len - 1:
+                p1, p2 = pts[i], pts[i + 1]
+                x1, y1 = p1[0] - scroll, p1[1]
+                x2, y2 = p2[0] - scroll, p2[1]
+                
+                l0[i].x, l0[i].y, l0[i].x2, l0[i].y2 = x1, y1, x2, y2
+                l0[i].visible = True
+                
+                l1[i].x, l1[i].y, l1[i].x2, l1[i].y2 = x1, y1, x2, y2
+                l1[i].visible = True
+                
+                l2[i].x, l2[i].y, l2[i].x2, l2[i].y2 = x1, y1, x2, y2
+                l2[i].visible = True
             else:
-                for layer in layers:
-                    layer[i].visible = False
+                l0[i].visible = l1[i].visible = l2[i].visible = False
 
     def on_draw(self):
         self.clear()
         self.batch.draw()
         self.fg_batch.draw()
+        self.top_batch.draw()
 
 
 if __name__ == "__main__":

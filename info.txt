@@ -1,0 +1,12 @@
+Only tested on a Ubuntu 24 lts PC so working on other configurations not known.
+
+To start:
+pip install -r requirements.txt
+then you will also need ffmpeg for video playing to work
+sudo apt install ffmpeg
+
+should work now, just run:
+python3 wave2.py
+
+"wave2" usually is more updated, "wave" should be more stable
+both should be about the same though
