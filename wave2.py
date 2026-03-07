@@ -5,8 +5,6 @@ import math
 import time
 import collections
 import os
-import subprocess
-import glob
 
 try:
     import serial
@@ -16,21 +14,18 @@ except ImportError:
     print("[WARNING] pyserial not installed - Arduino signalling disabled. "
           "Run: pip install pyserial")
 
-# ---------------------------------------------------------------------------
+
+# ===========================================================================
 # ARDUINO CONFIGURATION
-# ---------------------------------------------------------------------------
-# Set ARDUINO_PORT to a specific port string (e.g. "/dev/ttyUSB0", "COM3")
-# or leave as None to auto-detect the first Arduino-like device.
+# ===========================================================================
 ARDUINO_PORT     = None
 ARDUINO_BAUDRATE = 9600
-
-# Bytes sent to the Arduino on win / loss
-ARDUINO_WIN_MSG  = b'W'
-ARDUINO_LOSE_MSG = b'L'
+ARDUINO_WIN_MSG  = b'1'
+ARDUINO_LOSE_MSG = b'0'
 
 
 def _find_arduino_port():
-    """Return the first likely Arduino serial port, or None."""
+    import glob
     candidates = (
         glob.glob("/dev/ttyUSB*") +
         glob.glob("/dev/ttyACM*") +
@@ -42,7 +37,6 @@ def _find_arduino_port():
 
 
 def _open_arduino():
-    """Open and return a serial.Serial connected to the Arduino, or None."""
     if not _SERIAL_AVAILABLE:
         return None
     port = ARDUINO_PORT or _find_arduino_port()
@@ -51,7 +45,7 @@ def _open_arduino():
         return None
     try:
         conn = serial.Serial(port, ARDUINO_BAUDRATE, timeout=1)
-        time.sleep(2)          # wait for Arduino reset after DTR toggle
+        time.sleep(2)
         print(f"[INFO] Arduino connected on {port} at {ARDUINO_BAUDRATE} baud.")
         return conn
     except Exception as e:
@@ -60,7 +54,6 @@ def _open_arduino():
 
 
 def _send_arduino(conn, msg):
-    """Send msg (bytes) to Arduino; silently ignore errors."""
     if conn is None:
         return
     try:
@@ -70,82 +63,115 @@ def _send_arduino(conn, msg):
         print(f"[WARNING] Arduino write failed: {e}")
 
 
-# ---------------------------------------------------------------------------
-# MEDIA FILES  -  place these files next to game.py (or set full paths)
-# ---------------------------------------------------------------------------
-SPLASH_IMAGE   = "start.png"          # shown on startup
-INTRO_VIDEO    = "intro.mp4"           # plays before the game
-WIN_VIDEO      = "win.mp4"             # plays when players win
-LOSE_VIDEO     = "lose.mp4"            # plays when players lose
+# ===========================================================================
+# MEDIA FILE CONFIGURATION
+# ===========================================================================
+SPLASH_IMAGE = "start.png"
+INTRO_VIDEO  = "win1.mp4"
+WIN_VIDEO    = "win1.mp4"
+LOSE_VIDEO   = "lose1.mp4"
 
-# Video player command – ffplay plays fullscreen with no controls/border.
-# Swap 'ffplay' for 'mpv --fullscreen' or 'vlc --fullscreen' if preferred.
-VIDEO_PLAYER_CMD = [
-    "ffplay",
-    "-fs",           # fullscreen
-    "-autoexit",     # exit when video ends
-    "-noborder",
-    "-loglevel", "quiet",
-]
 
-# ---------------------------------------------------------------------------
-# GAME CONFIGURATION
-# ---------------------------------------------------------------------------
-SYNC_DURATION = 5.0
-INPUT_DELAY   = 2
-WAVE_RESOLUTION = 250
+# ===========================================================================
+# GAME LOGIC CONFIGURATION
+# ===========================================================================
+SYNC_DURATION = 5.0        
+INPUT_DELAY   = 2          
+WAVE_RESOLUTION = 250      
 
-IDLE_RESET_TIME   = 4.0
-IDLE_RETURN_SPEED = 4.0
-IDLE_WAVE_SETTLE  = 1.2
-
-PULSE_SPEED        = 1.5
-NEON_GLOW_STRENGTH = 0.6
+IDLE_RESET_TIME   = 4.0    
+IDLE_RETURN_SPEED = 4.0    
+IDLE_WAVE_SETTLE  = 1.2    
 
 SYNC_FREQ_TOLERANCE  = 0.10
-SYNC_PHASE_TOLERANCE = 0.5
+SYNC_PHASE_TOLERANCE = 0.5 
+FLAG_WIN_THRESHOLD   = 0.50
 
-FLAG_WIN_THRESHOLD = 0.50   # sync fraction needed to win
-
-# --- THICKNESS & SIZING RATIOS ---
-WAVE_GLOW_THICK_RATIO   = 0.020
-WAVE_CORE_THICK_RATIO   = 0.014
-WAVE_CENTER_THICK_RATIO = 0.004
-PHASOR_LINE_THICK_RATIO = 0.003
-AXIS_LINE_THICK_RATIO   = 0.002
-ARROW_HEAD_SIZE_RATIO   = 0.018
-WAVE_END_DOT_RATIO      = 0.007
-WAVE_END_DOT_CORE_RATIO = 0.0035
-
-# --- GRID ---
-GRID_CELL_W = 120
-GRID_CELL_H = 240
-GRID_STYLE  = "endless"
-GRID_COLOR  = (255, 255, 255, 75)
-
-PULSE_MAX_RADIUS_RATIO = 0.25
-PULSE_INTERVAL         = 0.9
-
-WAVE_WIDTH_PERCENT = 0.65
-AXIS_LABEL_X = "Laikas (t)"
-AXIS_LABEL_Y = "Itampa (I)"
-
-P1_COLOR = (120, 200, 120)
-P2_COLOR = (0, 150, 200)
-WHITE    = (255, 255, 255)
-
-# ---------------------------------------------------------------------------
-# GAME STATES
-# ---------------------------------------------------------------------------
+# Game states
 STATE_SPLASH       = "splash"
 STATE_INTRO_VIDEO  = "intro_video"
 STATE_PLAYING      = "playing"
 STATE_RESULT_VIDEO = "result_video"
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# VISUAL / STYLE CONFIGURATION
+# ===========================================================================
+
+# --- Colours ---
+P1_COLOR = (120, 200, 120)
+P2_COLOR = (0, 150, 200)
+WHITE    = (255, 255, 255)
+
+GRID_COLOR = (255, 255, 255, 75)
+
+# --- Neon glow ---
+NEON_GLOW_STRENGTH = 0.6   
+
+# --- Axis labels ---
+AXIS_LABEL_X = "Laikas (t)"
+AXIS_LABEL_Y = "Itampa (I)"
+
+PLAYER1_LABEL = "CESA"
+PLAYER2_LABEL = "Baltic"
+
+PLAYER1_FLAG_KEY_HINT = ""
+PLAYER2_FLAG_KEY_HINT = ""
+
+WAVE_WIDTH_PERCENT = 0.65 
+
+# All thickness
+# Based on screen diagonal so the layout scales identically on any resolution.
+WAVE_GLOW_THICK_RATIO   = 0.020
+WAVE_CORE_THICK_RATIO   = 0.014
+WAVE_CENTER_THICK_RATIO = 0.004
+PHASOR_LINE_THICK_RATIO = 0.003
+AXIS_LINE_THICK_RATIO   = 0.002
+WAVE_END_DOT_RATIO      = 0.007   
+WAVE_END_DOT_CORE_RATIO = 0.0035  
+
+ARROW_HEAD_SIZE_RATIO   = 0.018
+
+
+AXIS_FONT_RATIO         = 0.007
+SYNC_LABEL_FONT_RATIO   = 0.015
+
+
+DEGREE_LABEL_FONT_RATIO = 0.006
+
+INDICATOR_LABEL_FONT_RATIO = 0.010
+
+FLAG_LABEL_FONT_RATIO = 0.008
+FLAG_KEY_HINT_FONT_RATIO = 0.005
+
+INDICATOR_RADIUS_RATIO = 0.004
+
+FLAG_SIZE_RATIO = 0.014 
+
+
+PHASOR_RADIUS_RATIO = 0.35   
+
+# Spoke / web line thickness
+SPOKE_THICK_RATIO = 0.001
+
+# --- Grid ---
+GRID_CELL_W = 120           
+GRID_CELL_H = 240           
+GRID_STYLE  = "endless"     # "endless" or "closed"
+
+# --- Pulse rings (emitted from wave tip when idle) ---
+PULSE_MAX_RADIUS_RATIO = 0.25   # fraction of window height
+PULSE_SPEED            = 1.5    
+PULSE_INTERVAL         = 0.9    # seconds between pulse emissions
+
+# --- Wave amplitude and scroll speed ---
+AMPLITUDE_RATIO    = 0.18   # of window height
+WAVE_SPEED_RATIO   = 0.22   # of window width per second
+
+
+# ===========================================================================
 # HELPERS
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def _load_image(path):
     if not os.path.exists(path):
@@ -158,21 +184,50 @@ def _load_image(path):
         return None
 
 
-def _launch_video(path):
-    """Launch video fullscreen via ffplay subprocess. Returns Popen or None."""
+def _fix_wave():
+    """
+    Pyglet bundles its own wave.py that lacks stdlib attributes like 'open'.
+    Before every media.load call we swap sys.modules['wave'] for the real
+    stdlib copy, which lives alongside other stdlib modules like struct.py.
+    """
+    import sys, importlib.util, importlib.machinery
+    w = sys.modules.get('wave')
+    if w is not None and hasattr(w, 'open'):
+        return
+    struct_origin = importlib.util.find_spec('struct').origin
+    stdlib_dir = os.path.dirname(struct_origin)
+    wave_path  = os.path.join(stdlib_dir, 'wave.py')
+    if not os.path.isfile(wave_path):
+        for p in sys.path:
+            candidate = os.path.join(p, 'wave.py')
+            if os.path.isfile(candidate) and 'pyglet' not in candidate:
+                wave_path = candidate
+                break
+    loader = importlib.machinery.SourceFileLoader('wave', wave_path)
+    real_wave = loader.load_module('wave')
+    if not hasattr(real_wave, 'Error'):
+        real_wave.Error = EOFError
+    sys.modules['wave'] = real_wave
+
+
+def _load_video(path):
+    """Load a video as a pyglet media Source, or return None on failure."""
     if not os.path.exists(path):
         print(f"[WARNING] Video file not found: {path}")
         return None
     try:
-        return subprocess.Popen(VIDEO_PLAYER_CMD + [path])
+        _fix_wave()
+        return pyglet.media.load(path)
     except Exception as e:
-        print(f"[WARNING] Could not launch video {path}: {e}")
+        print(f"[WARNING] Could not load video {path}: {e}")
         return None
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # PULSE RING
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Configuration for pulse ring visual behaviour is in VISUAL / STYLE section
+# above (PULSE_MAX_RADIUS_RATIO, PULSE_SPEED, PULSE_INTERVAL).
 
 class PulseRing:
     __slots__ = ['color', 'circle', 'active', 'radius', 'max_radius']
@@ -208,9 +263,11 @@ class PulseRing:
         self.circle.visible = True
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # PLAYER STATE
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Configuration used here: INPUT_DELAY, IDLE_RESET_TIME, IDLE_RETURN_SPEED,
+# IDLE_WAVE_SETTLE (all in GAME LOGIC section above).
 
 class PlayerState:
     SETTLE_DURATION = 0.55
@@ -396,34 +453,63 @@ class PlayerState:
             self.points.popleft()
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # MAIN WINDOW
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 class MuseumSyncGame(pyglet.window.Window):
     def __init__(self):
         super().__init__(fullscreen=True, caption="CESA-Baltic frequency convergence")
 
+        # ------------------------------------------------------------------
+        # Derive all pixel sizes from the screen diagonal so every element
+        # scales proportionally on any resolution (720p, 1080p, 4K, …).
+        # ------------------------------------------------------------------
         diag = math.hypot(self.width, self.height)
 
+        # Wave line thicknesses
         self.WAVE_GLOW_THICK     = max(2, int(diag * WAVE_GLOW_THICK_RATIO))
         self.WAVE_CORE_THICK     = max(1, int(diag * WAVE_CORE_THICK_RATIO))
         self.WAVE_CENTER_THICK   = max(1, int(diag * WAVE_CENTER_THICK_RATIO))
         self.PHASOR_LINE_THICK   = max(1, int(diag * PHASOR_LINE_THICK_RATIO))
         self.AXIS_LINE_THICK     = max(1, int(diag * AXIS_LINE_THICK_RATIO))
+
+        # Arrow head
         self.ARROW_HEAD_SIZE     = max(8, int(diag * ARROW_HEAD_SIZE_RATIO))
+
+        # Wave-tip dots
         self.WAVE_END_DOT_R      = max(4, int(diag * WAVE_END_DOT_RATIO))
         self.WAVE_END_DOT_CORE_R = max(2, int(diag * WAVE_END_DOT_CORE_RATIO))
 
+        # Font sizes
+        self.AXIS_FONT_SIZE      = max(10, int(diag * AXIS_FONT_RATIO))
+        self.SYNC_LABEL_FONT     = max(16, int(diag * SYNC_LABEL_FONT_RATIO))
+        self.DEGREE_LABEL_FONT   = max(9,  int(diag * DEGREE_LABEL_FONT_RATIO))
+        self.INDICATOR_LABEL_FONT = max(12, int(diag * INDICATOR_LABEL_FONT_RATIO))
+        self.FLAG_LABEL_FONT     = max(8,  int(diag * FLAG_LABEL_FONT_RATIO))
+        self.FLAG_HINT_FONT      = max(9,  int(diag * FLAG_KEY_HINT_FONT_RATIO))
+
+        # Indicator dots and flag boxes
+        self.INDICATOR_RADIUS    = max(20, diag * INDICATOR_RADIUS_RATIO)
+        self.FLAG_SIZE           = max(22, int(diag * FLAG_SIZE_RATIO))
+
+        # Spoke / web grid lines
+        self.SPOKE_THICK         = max(1, int(diag * SPOKE_THICK_RATIO))
+
+        # Pulse rings
         self.PULSE_MAX_RADIUS = self.height * PULSE_MAX_RADIUS_RATIO
         self.PULSE_EXPAND_SPD = self.PULSE_MAX_RADIUS * PULSE_SPEED
 
+        # Wave panel and physics
         self.WAVE_AREA_W = self.width  * WAVE_WIDTH_PERCENT
-        self.AMPLITUDE   = self.height * 0.18
-        self.WAVE_SPEED  = self.width  * 0.22
-        self.PH_CX       = self.WAVE_AREA_W + (self.width - self.WAVE_AREA_W) / 2
-        self.PH_CY       = self.height / 2
-        self.PH_RADIUS   = min(self.width - self.WAVE_AREA_W, self.height) * 0.35
+        self.AMPLITUDE   = self.height * AMPLITUDE_RATIO
+        self.WAVE_SPEED  = self.width  * WAVE_SPEED_RATIO
+
+        # Phasor panel geometry
+        panel_w   = self.width - self.WAVE_AREA_W
+        self.PH_CX     = self.WAVE_AREA_W + panel_w / 2
+        self.PH_CY     = self.height / 2
+        self.PH_RADIUS = min(panel_w, self.height) * PHASOR_RADIUS_RATIO
 
         self.batch     = pyglet.graphics.Batch()
         self.fg_batch  = pyglet.graphics.Batch()
@@ -432,16 +518,17 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p1 = PlayerState(P1_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
         self.p2 = PlayerState(P2_COLOR, self.height, self.WAVE_AREA_W, self.WAVE_SPEED)
 
-        self._build_game_ui(diag)
+        self._build_game_ui()
 
         # Media assets
-        self._splash_image = _load_image(SPLASH_IMAGE)
+        self._splash_image  = _load_image(SPLASH_IMAGE)
         self._splash_sprite = None
-        # Subprocess-based video playback (avoids pyglet media/wave bug)
-        self._video_proc       = None   # Popen object for running video
+
+        self._media_player     = None
+        self._video_sprite     = None
         self._video_next_state = STATE_PLAYING
 
-        # Arduino serial connection (opened once, kept for the lifetime of the app)
+        # Arduino
         self._arduino = _open_arduino()
 
         self.state = None
@@ -454,7 +541,6 @@ class MuseumSyncGame(pyglet.window.Window):
     # -----------------------------------------------------------------------
 
     def _set_state(self, new_state, video_path=None):
-        # Teardown
         if self.state == STATE_SPLASH:
             if self._splash_sprite:
                 self._splash_sprite.delete()
@@ -486,19 +572,34 @@ class MuseumSyncGame(pyglet.window.Window):
 
     def _play_video(self, path, next_state):
         self._video_next_state = next_state
-        self._video_proc = _launch_video(path)
-        if self._video_proc is None:
-            # File missing or player unavailable — skip immediately
+        source = _load_video(path)
+        if source is None:
             pyglet.clock.schedule_once(lambda dt: self._set_state(next_state), 0)
+            return
+
+        self._stop_video()
+
+        player = pyglet.media.Player()
+        player.queue(source)
+
+        @player.event
+        def on_player_eos():
+            self._video_sprite = None
+            self._set_state(self._video_next_state)
+
+        player.play()
+        self._media_player = player
+        self._video_sprite = None
 
     def _stop_video(self):
-        if self._video_proc:
+        if self._media_player:
             try:
-                self._video_proc.terminate()
-                self._video_proc.wait(timeout=1)
+                self._media_player.pause()
+                self._media_player.delete()
             except Exception:
                 pass
-            self._video_proc = None
+            self._media_player = None
+        self._video_sprite = None
 
     def _reset_game(self):
         self.p1.reset()
@@ -528,7 +629,6 @@ class MuseumSyncGame(pyglet.window.Window):
             return
         sync_frac = self.sync_timer / SYNC_DURATION
         won       = sync_frac >= FLAG_WIN_THRESHOLD
-        # Signal the Arduino before starting the result video
         _send_arduino(self._arduino, ARDUINO_WIN_MSG if won else ARDUINO_LOSE_MSG)
         video = WIN_VIDEO if won else LOSE_VIDEO
         self._set_state(STATE_RESULT_VIDEO, video_path=video)
@@ -537,9 +637,13 @@ class MuseumSyncGame(pyglet.window.Window):
     # BUILD GAME UI
     # -----------------------------------------------------------------------
 
-    def _build_game_ui(self, diag):
+    def _build_game_ui(self):
+        # --- Background grid ---
+        # Configuration: GRID_CELL_W, GRID_CELL_H, GRID_STYLE, GRID_COLOR
         self._create_background_grid()
 
+        # --- Axis lines and labels ---
+        # Configuration: AXIS_LINE_THICK, AXIS_FONT_SIZE, AXIS_LABEL_X/Y
         self.axis_h = shapes.Line(
             50, self.height / 2, self.WAVE_AREA_W + 20, self.height / 2,
             thickness=self.AXIS_LINE_THICK, color=(*WHITE, 255), batch=self.batch)
@@ -548,17 +652,23 @@ class MuseumSyncGame(pyglet.window.Window):
             50, self.height / 2 + self.AMPLITUDE + 20,
             thickness=self.AXIS_LINE_THICK, color=(*WHITE, 255), batch=self.batch)
 
-        font_size = max(10, int(diag * 0.007))
-        self.lbl_x = pyglet.text.Label(AXIS_LABEL_X, font_size=font_size,
-                                        x=self.WAVE_AREA_W - 80, y=self.height / 2 - 30,
-                                        batch=self.batch)
-        self.lbl_y = pyglet.text.Label(AXIS_LABEL_Y, font_size=font_size,
-                                        x=60, y=self.height / 2 + self.AMPLITUDE + 25,
-                                        batch=self.batch)
+        self.lbl_x = pyglet.text.Label(
+            AXIS_LABEL_X, font_size=self.AXIS_FONT_SIZE,
+            x=self.WAVE_AREA_W - 80, y=self.height / 2 - 30,
+            batch=self.batch)
+        self.lbl_y = pyglet.text.Label(
+            AXIS_LABEL_Y, font_size=self.AXIS_FONT_SIZE,
+            x=60, y=self.height / 2 + self.AMPLITUDE + 25,
+            batch=self.batch)
 
+        # --- Neon wave line layers ---
+        # Configuration: WAVE_GLOW_THICK, WAVE_CORE_THICK, WAVE_CENTER_THICK,
+        #                NEON_GLOW_STRENGTH, WAVE_RESOLUTION, P1_COLOR, P2_COLOR
         self.p1_layers = self._create_neon_wave(P1_COLOR)
         self.p2_layers = self._create_neon_wave(P2_COLOR)
 
+        # --- Wave-tip dots (glow + solid + white core) ---
+        # Configuration: WAVE_END_DOT_R, WAVE_END_DOT_CORE_R, NEON_GLOW_STRENGTH
         self.p1_dot_glow = shapes.Circle(0, 0, self.WAVE_END_DOT_R * 2,
                                           color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.fg_batch)
         self.p1_dot      = shapes.Circle(0, 0, self.WAVE_END_DOT_R,
@@ -573,14 +683,17 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p2_dot_core = shapes.Circle(0, 0, self.WAVE_END_DOT_CORE_R,
                                           color=(*WHITE, 255), batch=self.top_batch)
 
+        # --- Phasor panel background ---
+        # Configuration: PH_CX, PH_CY, PH_RADIUS (derived from PHASOR_RADIUS_RATIO)
         self.pizza_slice = shapes.Sector(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(255, 255, 255, 40), batch=self.batch)
         self.phasor_bg   = shapes.Circle(self.PH_CX, self.PH_CY, self.PH_RADIUS,
                                           color=(15, 15, 15), batch=self.batch)
 
+        # --- Phasor web: rim, rings, spokes ---
+        # Configuration: SPOKE_THICK_RATIO -> self.SPOKE_THICK
         web_color   = (255, 255, 255, 75)
         ring_color  = (255, 255, 255, 100)
-        spoke_thick = max(1, int(diag * 0.001))
 
         N_RIM = 120
         self.rim_lines = []
@@ -592,7 +705,7 @@ class MuseumSyncGame(pyglet.window.Window):
                 self.PH_CY + self.PH_RADIUS * math.sin(a0),
                 self.PH_CX + self.PH_RADIUS * math.cos(a1),
                 self.PH_CY + self.PH_RADIUS * math.sin(a1),
-                thickness=spoke_thick * 2, color=web_color, batch=self.batch))
+                thickness=self.SPOKE_THICK * 2, color=web_color, batch=self.batch))
 
         self.web_rings = []
         for frac in (0.25, 0.50, 0.75):
@@ -604,7 +717,7 @@ class MuseumSyncGame(pyglet.window.Window):
                 self.web_rings.append(shapes.Line(
                     self.PH_CX + r * math.cos(a0), self.PH_CY + r * math.sin(a0),
                     self.PH_CX + r * math.cos(a1), self.PH_CY + r * math.sin(a1),
-                    thickness=spoke_thick, color=ring_color, batch=self.batch))
+                    thickness=self.SPOKE_THICK, color=ring_color, batch=self.batch))
 
         self.web_spokes = []
         for deg in range(0, 360, 45):
@@ -613,10 +726,11 @@ class MuseumSyncGame(pyglet.window.Window):
                 self.PH_CX, self.PH_CY,
                 self.PH_CX + self.PH_RADIUS * math.cos(a),
                 self.PH_CY + self.PH_RADIUS * math.sin(a),
-                thickness=spoke_thick, color=web_color, batch=self.batch))
+                thickness=self.SPOKE_THICK, color=web_color, batch=self.batch))
 
-        lbl_font = max(9, int(diag * 0.006))
-        lbl_off  = self.PH_RADIUS * 1.12
+        # --- Phasor degree labels (0 / 90 / 180 / 270) ---
+        # Configuration: DEGREE_LABEL_FONT
+        lbl_off = self.PH_RADIUS * 1.12
         self.degree_labels = []
         for deg, text in ((0, "0"), (90, "90"), (180, "180"), (270, "270")):
             a  = math.radians(deg)
@@ -625,96 +739,104 @@ class MuseumSyncGame(pyglet.window.Window):
             ax = 'left' if deg == 0 else ('right' if deg == 180 else 'center')
             ay = 'center' if deg in (0, 180) else ('bottom' if deg == 90 else 'top')
             self.degree_labels.append(pyglet.text.Label(
-                text, font_size=lbl_font, x=lx, y=ly,
+                text, font_size=self.DEGREE_LABEL_FONT, x=lx, y=ly,
                 anchor_x=ax, anchor_y=ay,
                 color=(200, 200, 200, 180), batch=self.batch))
 
-        # Player indicator circles
-        indicator_radius = max(20, diag * 0.004)
+        # --- Player indicator dots and labels (CESA / Baltic) ---
+        # Configuration: INDICATOR_RADIUS, INDICATOR_LABEL_FONT,
+        #                NEON_GLOW_STRENGTH, P1_COLOR, P2_COLOR
         indicator_y = self.PH_CY - self.PH_RADIUS - self.height * 0.12
+
         self.p1_indicator_glow = shapes.Circle(
-            self.PH_CX - 80, indicator_y, indicator_radius * 1.5,
+            self.PH_CX - 80, indicator_y, self.INDICATOR_RADIUS * 1.5,
             color=(*P1_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
         self.p1_indicator = shapes.Circle(
-            self.PH_CX - 80, indicator_y, indicator_radius,
+            self.PH_CX - 80, indicator_y, self.INDICATOR_RADIUS,
             color=(*P1_COLOR, 255), batch=self.batch)
         self.p1_indicator_label = pyglet.text.Label(
-            "CESA", font_size=16,
-            x=self.PH_CX - 80, y=indicator_y - 35,
+            PLAYER1_LABEL, font_size=self.INDICATOR_LABEL_FONT,
+            x=self.PH_CX - 80, y=indicator_y - self.INDICATOR_RADIUS * 1.8,
             anchor_x='center', anchor_y='top', batch=self.batch)
 
         self.p2_indicator_glow = shapes.Circle(
-            self.PH_CX + 80, indicator_y, indicator_radius * 1.5,
+            self.PH_CX + 80, indicator_y, self.INDICATOR_RADIUS * 1.5,
             color=(*P2_COLOR, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
         self.p2_indicator = shapes.Circle(
-            self.PH_CX + 80, indicator_y, indicator_radius,
+            self.PH_CX + 80, indicator_y, self.INDICATOR_RADIUS,
             color=(*P2_COLOR, 255), batch=self.batch)
         self.p2_indicator_label = pyglet.text.Label(
-            "Baltic", font_size=16,
-            x=self.PH_CX + 80, y=indicator_y - 35,
+            PLAYER2_LABEL, font_size=self.INDICATOR_LABEL_FONT,
+            x=self.PH_CX + 80, y=indicator_y - self.INDICATOR_RADIUS * 1.8,
             anchor_x='center', anchor_y='top', batch=self.batch)
 
-        # Sync progress circle
+        # --- Sync fill circle ---
         self.sync_circle = shapes.Circle(
             self.PH_CX, self.PH_CY, 0,
             color=(0, 255, 100, 100), batch=self.batch)
 
+        # --- Phasor arrows ---
+        # Configuration: PHASOR_LINE_THICK, ARROW_HEAD_SIZE, P1_COLOR, P2_COLOR
         self.p1_arrow = self._create_arrow(P1_COLOR)
         self.p2_arrow = self._create_arrow(P2_COLOR)
 
-        label_font = max(16, int(diag * 0.015))
+        # --- Sync percentage readout ---
+        # Configuration: SYNC_LABEL_FONT
         self.sync_label = pyglet.text.Label(
-            "READY", font_size=label_font,
-            x=diag * 0.72, y=self.height - self.height * 0.1,
+            "READY", font_size=self.SYNC_LABEL_FONT,
+            x=self.PH_CX, y=self.height - self.height * 0.06,
             anchor_x='center', anchor_y='top', batch=self.batch)
         self.last_sync_prog = -1
 
-        # ---- FLAG UI ----
-        flag_y    = indicator_y - self.height * 0.09
-        flag_size = max(22, int(diag * 0.014))
-        half      = flag_size // 2
+        # --- Flag widgets ---
+        # Configuration: FLAG_SIZE, FLAG_LABEL_FONT, FLAG_HINT_FONT,
+        #                PLAYER1/2_FLAG_KEY_HINT, P1_COLOR, P2_COLOR
+        flag_y   = indicator_y - self.height * 0.09
+        half     = self.FLAG_SIZE // 2
 
         self.p1_flag_box = shapes.Rectangle(
             self.PH_CX - 80 - half, flag_y - half,
-            flag_size, flag_size,
+            self.FLAG_SIZE, self.FLAG_SIZE,
             color=(*P1_COLOR, 55), batch=self.batch)
         self.p1_flag_border = shapes.Box(
             self.PH_CX - 80 - half, flag_y - half,
-            flag_size, flag_size,
-            thickness=2, color=(*P1_COLOR, 180), batch=self.batch)
+            self.FLAG_SIZE, self.FLAG_SIZE,
+            thickness=max(1, int(self.FLAG_SIZE * 0.07)),
+            color=(*P1_COLOR, 180), batch=self.batch)
         self.p1_flag_label = pyglet.text.Label(
-            "FLAG", font_size=max(8, flag_size // 3),
+            "", font_size=self.FLAG_LABEL_FONT,
             x=self.PH_CX - 80, y=flag_y,
             anchor_x='center', anchor_y='center',
             color=(*P1_COLOR, 230), batch=self.batch)
 
         self.p2_flag_box = shapes.Rectangle(
             self.PH_CX + 80 - half, flag_y - half,
-            flag_size, flag_size,
+            self.FLAG_SIZE, self.FLAG_SIZE,
             color=(*P2_COLOR, 55), batch=self.batch)
         self.p2_flag_border = shapes.Box(
             self.PH_CX + 80 - half, flag_y - half,
-            flag_size, flag_size,
-            thickness=2, color=(*P2_COLOR, 180), batch=self.batch)
+            self.FLAG_SIZE, self.FLAG_SIZE,
+            thickness=max(1, int(self.FLAG_SIZE * 0.07)),
+            color=(*P2_COLOR, 180), batch=self.batch)
         self.p2_flag_label = pyglet.text.Label(
-            "FLAG", font_size=max(8, flag_size // 3),
+            "", font_size=self.FLAG_LABEL_FONT,
             x=self.PH_CX + 80, y=flag_y,
             anchor_x='center', anchor_y='center',
             color=(*P2_COLOR, 230), batch=self.batch)
 
-        hint_font = max(9, int(diag * 0.005))
         self.p1_flag_hint = pyglet.text.Label(
-            "[D]", font_size=hint_font,
+            PLAYER1_FLAG_KEY_HINT, font_size=self.FLAG_HINT_FONT,
             x=self.PH_CX - 80, y=flag_y - half - 4,
             anchor_x='center', anchor_y='top',
             color=(200, 200, 200, 130), batch=self.batch)
         self.p2_flag_hint = pyglet.text.Label(
-            "[/]", font_size=hint_font,
+            PLAYER2_FLAG_KEY_HINT, font_size=self.FLAG_HINT_FONT,
             x=self.PH_CX + 80, y=flag_y - half - 4,
             anchor_x='center', anchor_y='top',
             color=(200, 200, 200, 130), batch=self.batch)
 
-        # Pulses
+        # --- Pulse rings ---
+        # Configuration: PULSE_MAX_RADIUS_RATIO, PULSE_SPEED, PULSE_INTERVAL
         self.p1_pulses    = [PulseRing(P1_COLOR, self.fg_batch) for _ in range(3)]
         self.p2_pulses    = [PulseRing(P2_COLOR, self.fg_batch) for _ in range(3)]
         self.p1_pulse_idx = 0
@@ -725,10 +847,12 @@ class MuseumSyncGame(pyglet.window.Window):
         self.sync_timer = 0.0
 
     # -----------------------------------------------------------------------
-    # GRID / WAVE / ARROW
+    # GRID / WAVE / ARROW helpers
     # -----------------------------------------------------------------------
 
     def _create_background_grid(self):
+        # Configuration: GRID_CELL_W, GRID_CELL_H, GRID_STYLE, GRID_COLOR,
+        #                WAVE_WIDTH_PERCENT (via self.WAVE_AREA_W)
         self.bg_grid_lines = []
         if GRID_STYLE == "closed":
             min_y = int(self.height / 2 - self.AMPLITUDE - 20)
@@ -741,7 +865,7 @@ class MuseumSyncGame(pyglet.window.Window):
         cy = self.height / 2
         y_offsets = [0]
         i = 1
-        while cy + i * GRID_CELL_H <= max_y: y_offsets.append(i * GRID_CELL_H); i += 1
+        while cy + i * GRID_CELL_H <= max_y: y_offsets.append( i * GRID_CELL_H); i += 1
         i = 1
         while cy - i * GRID_CELL_H >= min_y: y_offsets.append(-i * GRID_CELL_H); i += 1
         for offset in y_offsets:
@@ -761,6 +885,8 @@ class MuseumSyncGame(pyglet.window.Window):
                                                        color=GRID_COLOR, batch=self.batch))
 
     def _create_neon_wave(self, color):
+        # Configuration: WAVE_GLOW_THICK, WAVE_CORE_THICK, WAVE_CENTER_THICK,
+        #                NEON_GLOW_STRENGTH, WAVE_RESOLUTION
         return (
             [shapes.Line(0,0,0,0, thickness=self.WAVE_GLOW_THICK,
                          color=(*color, int(255 * NEON_GLOW_STRENGTH / 2)), batch=self.batch)
@@ -774,6 +900,7 @@ class MuseumSyncGame(pyglet.window.Window):
         )
 
     def _create_arrow(self, color):
+        # Configuration: PHASOR_LINE_THICK (-> self.PHASOR_LINE_THICK)
         stem = shapes.Line(self.PH_CX, self.PH_CY, self.PH_CX, self.PH_CY + 1,
                            thickness=self.PHASOR_LINE_THICK, color=(*color, 255),
                            batch=self.batch)
@@ -783,6 +910,7 @@ class MuseumSyncGame(pyglet.window.Window):
         return {'stem': stem, 'head': head}
 
     def _update_arrow(self, arrow, angle):
+        # Configuration: ARROW_HEAD_SIZE (-> self.ARROW_HEAD_SIZE)
         cos_a = math.cos(angle); sin_a = math.sin(angle)
         r       = self.PH_RADIUS * 0.85
         tip_x   = self.PH_CX + r * cos_a
@@ -816,24 +944,20 @@ class MuseumSyncGame(pyglet.window.Window):
         if symbol == key.ESCAPE:
             self.close()
 
-        # Splash: any key → intro video
         if self.state == STATE_SPLASH:
             if symbol != key.ESCAPE:
                 self._set_state(STATE_INTRO_VIDEO)
             return
 
-        # Videos are unskippable — consume all input except ESC
         if self.state in (STATE_INTRO_VIDEO, STATE_RESULT_VIDEO):
             return
 
-        # Playing
         if self.state == STATE_PLAYING:
             if symbol == key.W:     self.p1.queue_signal('u', t)
             if symbol == key.S:     self.p1.queue_signal('d', t)
             if symbol == key.UP:    self.p2.queue_signal('u', t)
             if symbol == key.DOWN:  self.p2.queue_signal('d', t)
 
-            # Flag buttons
             if symbol == key.D and not self.p1.flag_raised:
                 self.p1.flag_raised = True
                 self._update_flag_ui()
@@ -849,13 +973,7 @@ class MuseumSyncGame(pyglet.window.Window):
     # -----------------------------------------------------------------------
 
     def update(self, dt):
-        # Poll video subprocess — transition when it exits
         if self.state in (STATE_INTRO_VIDEO, STATE_RESULT_VIDEO):
-            if self._video_proc is not None and self._video_proc.poll() is not None:
-                # Process has ended naturally
-                self._video_proc = None
-                next_st = getattr(self, '_video_next_state', STATE_SPLASH)
-                self._set_state(next_st)
             return
 
         if self.state != STATE_PLAYING:
@@ -865,6 +983,7 @@ class MuseumSyncGame(pyglet.window.Window):
         self.p1.update(dt, now, self.AMPLITUDE)
         self.p2.update(dt, now, self.AMPLITUDE)
 
+        # Pulse rings from wave tips when idle
         p1_idle = not self.p1.ever_had_input or (now - self.p1.last_input_time > IDLE_RESET_TIME)
         p2_idle = not self.p2.ever_had_input or (now - self.p2.last_input_time > IDLE_RESET_TIME)
 
@@ -887,12 +1006,14 @@ class MuseumSyncGame(pyglet.window.Window):
         for p in self.p1_pulses + self.p2_pulses:
             p.update(dt, self.PULSE_EXPAND_SPD)
 
+        # Phasor phase-difference sector
         p1_ang = self.p1.display_angle
         p2_ang = self.p2.display_angle
         diff   = (p1_ang - p2_ang + math.pi) % (2 * math.pi) - math.pi
         self.pizza_slice.start_angle = p2_ang
         self.pizza_slice.angle       = diff
 
+        # Sync detection
         f_diff      = abs(self.p1.frequency - self.p2.frequency)
         p_diff      = abs((self.p1.phase - self.p2.phase + math.pi) % (2 * math.pi) - math.pi)
         both_active = self.p1.frequency > 0.05 and self.p2.frequency > 0.05
@@ -953,6 +1074,22 @@ class MuseumSyncGame(pyglet.window.Window):
                 for layer in (l0, l1, l2):
                     layer[i].visible = False
 
+    def _draw_video_frame(self):
+        """Draw the current video frame scaled to fill the window."""
+        if self._media_player is None:
+            return
+        texture = self._media_player.texture
+        if texture is None:
+            return
+        vw, vh = texture.width, texture.height
+        if vw == 0 or vh == 0:
+            return
+        scale = max(self.width / vw, self.height / vh)
+        dw, dh = vw * scale, vh * scale
+        x = (self.width  - dw) / 2
+        y = (self.height - dh) / 2
+        texture.blit(x, y, width=dw, height=dh)
+
     def on_draw(self):
         self.clear()
 
@@ -962,13 +1099,13 @@ class MuseumSyncGame(pyglet.window.Window):
             else:
                 pyglet.text.Label(
                     "Press any key to start",
-                    font_size=36,
+                    font_size=self.SYNC_LABEL_FONT,
                     x=self.width // 2, y=self.height // 2,
                     anchor_x='center', anchor_y='center',
                 ).draw()
 
         elif self.state in (STATE_INTRO_VIDEO, STATE_RESULT_VIDEO):
-            pass  # ffplay renders in its own fullscreen window
+            self._draw_video_frame()
 
         elif self.state == STATE_PLAYING:
             self.batch.draw()
